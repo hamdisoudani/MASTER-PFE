@@ -1,5 +1,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+ARG NEXT_PUBLIC_COPILOT_URL
+ENV NEXT_PUBLIC_COPILOT_URL=$NEXT_PUBLIC_COPILOT_URL
+
 COPY package.json package-lock.json ./
 RUN npm ci --legacy-peer-deps
 COPY . .
