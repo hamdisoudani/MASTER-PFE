@@ -33,16 +33,16 @@ export function Chat({ threadId, onPlanUpdate }: ChatProps) {
         {visibleMessages.length === 0 && (
           <div className="text-center text-[var(--muted)] mt-16">
             <p className="text-2xl mb-2">🤖</p>
-            <p>Ask me anything. I'll create a plan and execute it.</p>
+            <p>Ask me anything. I&apos;ll create a plan and execute it.</p>
           </div>
         )}
         {visibleMessages.map((msg, i) => {
+          if (!(msg instanceof TextMessage)) return null;
           const isUser = msg.role === Role.User;
-          const content = msg instanceof TextMessage ? msg.content : '';
           return (
             <div key={i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap ${isUser ? 'bg-[var(--accent)] text-white rounded-br-sm' : 'bg-white/5 text-[var(--text)] rounded-bl-sm border border-[var(--border)]'}`}>
-                {content}
+                {msg.content}
               </div>
             </div>
           );
@@ -60,7 +60,7 @@ export function Chat({ threadId, onPlanUpdate }: ChatProps) {
       </div>
       <div className="border-t border-[var(--border)] p-4">
         <div className="flex gap-2 items-end">
-          <textarea ref={inputRef} rows={1} placeholder="Type a message… (Enter to send, Shift+Enter for newline)" onKeyDown={handleKeyDown}
+          <textarea ref={inputRef} rows={1} placeholder="Type a message\u2026 (Enter to send, Shift+Enter for newline)" onKeyDown={handleKeyDown}
             className="flex-1 resize-none rounded-xl bg-white/5 border border-[var(--border)] text-[var(--text)] placeholder-[var(--muted)] px-4 py-3 text-sm focus:outline-none focus:border-[var(--accent)] transition-colors" />
           {isLoading
             ? <button onClick={stopGeneration} className="px-4 py-3 rounded-xl bg-red-500/20 hover:bg-red-500/40 text-red-400 text-sm font-medium transition-colors">Stop</button>
