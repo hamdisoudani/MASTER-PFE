@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const runtimeUrl = process.env.NEXT_PUBLIC_RUNTIME_URL ?? '/api/copilotkit';
+  const runtimeUrl = process.env.NEXT_PUBLIC_COPILOT_URL ?? '/api/copilotkit';
   return (
     <html lang="en">
       <body>

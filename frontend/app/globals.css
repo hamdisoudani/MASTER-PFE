@@ -1,2 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
+
+:root {
+  --background: #0f172a;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --border: rgba(255, 255, 255, 0.1);
+  --surface: rgba(255, 255, 255, 0.05);
+}
+
+body {
+  background: var(--background);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.copilotKitChat,
+[class*="copilotKitChat"] {
+  height: 100% !important;
+  max-height: 100% !important;
+}
+
+.copilotKitChat [class*="wrapper"],
+.copilotKitChat [class*="container"] {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar { width: 6px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
