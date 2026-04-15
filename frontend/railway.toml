@@ -1,13 +1,9 @@
 [build]
-builder = "nixpacks"
-buildCommand = "npm install --legacy-peer-deps && npm run build"
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "npm start"
 healthcheckPath = "/"
 healthcheckTimeout = 120
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
-
-[variables]
-NODE_ENV = "production"
