@@ -9,11 +9,10 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const runtimeUrl = process.env.NEXT_PUBLIC_COPILOT_URL ?? 'https://backend-production-47f8.up.railway.app/copilotkit';
   return (
     <html lang="en">
       <body>
-        <CopilotKit runtimeUrl={runtimeUrl} agent="default">
+        <CopilotKit runtimeUrl="https://backend-production-47f8.up.railway.app/copilotkit" agent="default">
           {children}
         </CopilotKit>
       </body>
