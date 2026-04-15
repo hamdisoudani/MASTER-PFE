@@ -11,7 +11,10 @@ import os
 import sys
 import types
 
-# Patch opentelemetry stubs for environments where it is broken
+os.environ.setdefault("UVICORN_HOST", "0.0.0.0")
+if "PORT" in os.environ:
+    os.environ["UVICORN_PORT"] = os.environ["PORT"]
+
 for _m in [k for k in list(sys.modules) if "opentelemetry" in k]:
     del sys.modules[_m]
 
@@ -42,7 +45,7 @@ from copilotkit import LangGraphAGUIAgent
 from .graph import graph
 
 app = FastAPI(
-    title="Master PFE — LangGraph Agent",
+    title="Master PFE \u2014 LangGraph Agent",
     description="AG-UI agent powered by LangGraph + NVIDIA NIM",
     version="1.0.0",
 )
@@ -76,7 +79,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "agent.main:app",
-        host=os.getenv("AGENT_HOST", "0.0.0.0"),
-        port=int(os.getenv("AGENT_PORT", "8000")),
+        host=os.getenv("UVICORN_HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "8000")),
         reload=False,
     )
