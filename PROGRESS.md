@@ -1,77 +1,67 @@
-# PROGRESS.md — Master PFE
+# MASTER-PFE — Implementation Progress
 
-## Architecture Overview
+## Status: ✅ COMPLETE
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Browser (Next.js 14)                          │
-│  CopilotKit v1.55  ·  CopilotSidebar  ·  useCoAgent                 │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │ POST /api/copilotkit (rewrite)
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│          NestJS Backend  (port 3001)                                  │
-│  CopilotKit Runtime v2  ·  createCopilotExpressHandler               │
-│  REST API  /api/chats  ·  TypeORM + SQLite                           │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │ AG-UI protocol  HTTP → port 8000
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│          Python Agent  (FastAPI, port 8000)                           │
-│  CopilotKit SDK  ·  LangGraphAGUIAgent  ·  LangGraph state machine   │
-│  Custom LLM via .env  (openai | anthropic | google | custom)         │
-└─────────────────────────────────────────────────────────────────────┘
-```
+### Commit: [271cae7](https://github.com/hamdisoudani/MASTER-PFE/commit/271cae7ac5586a111c6f47e6fe031976687e3bab)
 
-## Services
+---
 
-| Service   | Port | Tech                              |
-|-----------|------|-----------------------------------|
-| Frontend  | 3000 | Next.js 14 + CopilotKit v1.55     |
-| Backend   | 3001 | NestJS 10 + CopilotKit Runtime v2 |
-| Agent     | 8000 | FastAPI + LangGraph + CopilotKit  |
+## What Works
 
-## Key CopilotKit Choices
+### Python Agent (FastAPI + LangGraph)
+- ✅ `GET /health` → `{"status":"ok","agent":"default","llm":"mistralai/mistral-small-4-119b-2603"}`
+- ✅ `POST /copilotkit` → AG-UI SSE stream (full LLM response streaming)
+- ✅ NVIDIA NIM: `mistralai/mistral-small-4-119b-2603` via `https://integrate.api.nvidia.com/v1`
+- ✅ Public HTTPS via Cloudflare Quick Tunnel: `https://legislation-chan-mentioned-helicopter.trycloudflare.com`
+- ✅ Swagger UI: `https://legislation-chan-mentioned-helicopter.trycloudflare.com/docs`
 
-### Frontend
-- `CopilotKit` provider from `@copilotkit/react-core` with `runtimeUrl="/api/copilotkit"`
-- `CopilotSidebar` from `@copilotkit/react-ui` (pre-built UI)
-- `useCoAgent<T>` — read/write typed LangGraph agent state
-- `useCoAgentStateRender<T>` — generative UI on agent state changes
-- `useCopilotAction` — expose frontend tools the agent can call
+### NestJS Backend
+- ✅ Source: `backend/src/copilot/copilot.controller.ts`
+- ✅ Uses `@copilotkit/runtime` v1.8.14 stable API
+- ✅ `CopilotRuntime` + `HttpAgent` → forwards to Python agent
+- ✅ Ready to `npm run build && npm start`
 
-### Backend (NestJS)
-- `CopilotRuntime` + `HttpAgent` from `@copilotkit/runtime/v2`
-- `createCopilotExpressHandler` from `@copilotkit/runtime/v2/express`
-- Mounted via `CopilotController` inside NestJS on `/copilotkit/**`
+### Next.js Frontend
+- ✅ Source: `frontend/app/layout.tsx`, `frontend/app/page.tsx`
+- ✅ `CopilotKit` provider + `CopilotChat` UI
+- ✅ Ready to `npm run build && npm start`
 
-### Python Agent
-- `CopilotKitRemoteEndpoint` + `LangGraphAGUIAgent` from `copilotkit` SDK
-- `add_fastapi_endpoint(app, sdk, "/copilotkit")` — registers AG-UI routes
-- `CopilotKitState` as graph state; `copilotkit_customize_config` for streaming
-- Custom LLM factory reads `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`
+### Infrastructure
+- ✅ `docker-compose.yml` — one-command full-stack launch
+- ✅ `cloudflare-tunnel.sh` — quick public HTTPS tunnels
+- ✅ Dockerfiles for all three services
 
-## Getting Started
+---
+
+## Key Bug Fix
+
+**Root cause:** `CopilotKitRemoteEndpoint` calls `agent.execute()`, but  
+`LangGraphAGUIAgent` (CopilotKit v2 AG-UI agent) inherits from  
+`ag_ui_langgraph.LangGraphAgent` which does **not** implement `execute()`.
+
+**Fix:** Mount `LangGraphAGUIAgent` directly via  
+`ag_ui_langgraph.add_langgraph_fastapi_endpoint()` — this uses the AG-UI SSE  
+protocol natively, which is exactly what `HttpAgent` in the NestJS  
+`CopilotRuntime` expects.
+
+---
+
+## Quick Start
 
 ```bash
-# 1. Agent
-cd agent && cp .env.example .env && pip install -r requirements.txt
-uvicorn agent.main:app --reload --port 8000
+# Configure
+cp agent/.env.example agent/.env     # fill LLM_API_KEY
 
-# 2. Backend
-cd backend && cp .env.example .env && npm install && npm run start:dev
+# Run (Docker)
+docker compose up --build
 
-# 3. Frontend
-cd frontend && cp .env.example .env.local && npm install && npm run dev
+# Run (local)
+cd agent && pip install -r requirements.txt
+uvicorn agent.main:app --port 8000
 ```
 
-Open http://localhost:3000
-
-## Progress Log
-| Date       | Milestone                                                   |
-|------------|-------------------------------------------------------------|
-| 2025-04-15 | Initial scaffold                                            |
-| 2025-04-15 | Full rewrite: CopilotKit v2, LangGraph Python agent sidecar |
-| 2025-04-15 | No `any` types; strict TypeScript; custom LLM env vars      |
-| 2025-04-15 | useCoAgent + useCoAgentStateRender + useCopilotAction        |
-| 2025-04-15 | PlanView generative UI; Docker Compose for all 3 services   |
+Test:
+```bash
+curl http://localhost:8000/health
+# {"status":"ok","agent":"default","llm":"mistralai/mistral-small-4-119b-2603"}
+```
