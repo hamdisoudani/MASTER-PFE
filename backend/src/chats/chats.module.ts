@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
-import { ChatsController } from './chats.controller';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ChatEntity } from './chat.entity';
 import { ChatsService } from './chats.service';
+import { ChatsController } from './chats.controller';
 
 @Module({
-  controllers: [ChatsController],
+  imports: [TypeOrmModule.forFeature([ChatEntity])],
   providers: [ChatsService],
-  exports: [ChatsService],
+  controllers: [ChatsController],
 })
 export class ChatsModule {}

@@ -1,34 +1,47 @@
-import { Injectable } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
-import { Chat } from './chat.entity';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ChatEntity, ChatMessage } from './chat.entity';
+import { CreateChatDto } from './dto/create-chat.dto';
+import { AddMessageDto } from './dto/add-message.dto';
 
 @Injectable()
 export class ChatsService {
-  private chats: Map<string, Chat> = new Map();
+  constructor(
+    @InjectRepository(ChatEntity)
+    private readonly repo: Repository<ChatEntity>,
+  ) {}
 
-  create(userId: string, title?: string): Chat {
-    const id = uuidv4();
-    const threadId = uuidv4();
-    const now = new Date().toISOString();
-    const chat: Chat = { id, userId, threadId, title: title ?? 'New Chat', createdAt: now, updatedAt: now };
-    this.chats.set(id, chat);
+  async findAll(): Promise<ChatEntity[]> {
+    return this.repo.find({ order: { updatedAt: 'DESC' } });
+  }
+
+  async findOne(id: string): Promise<ChatEntity> {
+    const chat = await this.repo.findOne({ where: { id } });
+    if (!chat) throw new NotFoundException(`Chat ${id} not found`);
     return chat;
   }
 
-  findAll(userId?: string): Chat[] {
-    const all = Array.from(this.chats.values());
-    return userId ? all.filter((c) => c.userId === userId) : all;
+  async create(dto: CreateChatDto): Promise<ChatEntity> {
+    const chat = this.repo.create({ title: dto.title });
+    chat.messages = [];
+    return this.repo.save(chat);
   }
 
-  findOne(id: string): Chat | undefined { return this.chats.get(id); }
-
-  update(id: string, title: string): Chat | undefined {
-    const chat = this.chats.get(id);
-    if (!chat) return undefined;
-    chat.title = title;
-    chat.updatedAt = new Date().toISOString();
-    return chat;
+  async addMessage(id: string, dto: AddMessageDto): Promise<ChatEntity> {
+    const chat = await this.findOne(id);
+    const msg: ChatMessage = {
+      id: dto.id,
+      role: dto.role,
+      content: dto.content,
+      createdAt: dto.createdAt,
+    };
+    chat.messages = [...chat.messages, msg];
+    return this.repo.save(chat);
   }
 
-  remove(id: string): boolean { return this.chats.delete(id); }
+  async remove(id: string): Promise<void> {
+    const chat = await this.findOne(id);
+    await this.repo.remove(chat);
+  }
 }

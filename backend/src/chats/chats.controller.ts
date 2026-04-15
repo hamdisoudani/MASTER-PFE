@@ -1,29 +1,48 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Param,
+  Body,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { ChatsService } from './chats.service';
+import { ChatEntity } from './chat.entity';
+import { CreateChatDto } from './dto/create-chat.dto';
+import { AddMessageDto } from './dto/add-message.dto';
 
-@Controller('chats')
+@Controller('api/chats')
 export class ChatsController {
   constructor(private readonly chatsService: ChatsService) {}
 
-  @Post()
-  create(@Body() body: { userId: string; title?: string }) {
-    return this.chatsService.create(body.userId, body.title);
+  @Get()
+  findAll(): Promise<ChatEntity[]> {
+    return this.chatsService.findAll();
   }
 
-  @Get()
-  findAll(@Query('userId') userId?: string) { return this.chatsService.findAll(userId); }
-
   @Get(':id')
-  findOne(@Param('id') id: string) { return this.chatsService.findOne(id); }
+  findOne(@Param('id') id: string): Promise<ChatEntity> {
+    return this.chatsService.findOne(id);
+  }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() body: { title: string }) {
-    return this.chatsService.update(id, body.title);
+  @Post()
+  create(@Body() dto: CreateChatDto): Promise<ChatEntity> {
+    return this.chatsService.create(dto);
+  }
+
+  @Post(':id/messages')
+  addMessage(
+    @Param('id') id: string,
+    @Body() dto: AddMessageDto,
+  ): Promise<ChatEntity> {
+    return this.chatsService.addMessage(id, dto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    this.chatsService.remove(id);
-    return { success: true };
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(@Param('id') id: string): Promise<void> {
+    return this.chatsService.remove(id);
   }
 }

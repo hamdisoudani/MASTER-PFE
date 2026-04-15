@@ -1,21 +1,23 @@
 import { Module } from '@nestjs/common';
-import { ServeStaticModule } from '@nestjs/serve-static';
-import { join } from 'path';
-import { AgentModule } from './agent/agent.module';
-import { CheckpointerModule } from './checkpointer/checkpointer.module';
-import { CopilotModule } from './copilot/copilot.module';
+import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChatsModule } from './chats/chats.module';
+import { CopilotModule } from './copilot/copilot.module';
+import { ChatEntity } from './chats/chat.entity';
 
 @Module({
   imports: [
-    ServeStaticModule.forRoot({
-      rootPath: join(__dirname, '..', 'public'),
-      serveRoot: '/',
+    ConfigModule.forRoot({ isGlobal: true }),
+
+    TypeOrmModule.forRoot({
+      type: 'better-sqlite3',
+      database: process.env.DB_PATH ?? './data/chats.sqlite',
+      entities: [ChatEntity],
+      synchronize: true,
     }),
-    CheckpointerModule,
-    AgentModule,
-    CopilotModule,
+
     ChatsModule,
+    CopilotModule,
   ],
 })
 export class AppModule {}

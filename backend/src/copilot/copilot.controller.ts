@@ -1,35 +1,50 @@
-import { All, Controller, Req, Res } from '@nestjs/common';
-import { Request, Response } from 'express';
 import {
-  CopilotRuntime,
-  OpenAIAdapter,
-  copilotRuntimeNestEndpoint,
-} from '@copilotkit/runtime';
-import { AgentService } from '../agent/agent.service';
+  All,
+  Controller,
+  Req,
+  Res,
+  Next,
+  OnModuleInit,
+} from '@nestjs/common';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
+import { CopilotRuntime } from '@copilotkit/runtime/v2';
+import { createCopilotExpressHandler } from '@copilotkit/runtime/v2/express';
+import { HttpAgent } from '@copilotkit/runtime/v2';
 
-@Controller('copilot')
-export class CopilotController {
-  constructor(private readonly agentService: AgentService) {}
+/**
+ * CopilotController
+ *
+ * Mounts the CopilotKit Runtime as an Express router inside NestJS.
+ * The runtime proxies requests to the Python LangGraph agent via HttpAgent.
+ *
+ * All routes under /copilotkit/** are handled here.
+ */
+@Controller('copilotkit')
+export class CopilotController implements OnModuleInit {
+  private handler!: RequestHandler;
 
-  @All()
-  async handleCopilot(@Req() req: Request, @Res() res: Response) {
-    const graph = await this.agentService.getGraph();
-    const serviceAdapter = new OpenAIAdapter({
-      openai: { apiKey: process.env.OPENAI_API_KEY } as any,
-    });
+  onModuleInit(): void {
+    const agentUrl = process.env.AGENT_URL ?? 'http://localhost:8000/copilotkit';
+
     const runtime = new CopilotRuntime({
       agents: {
-        myAgent: {
-          graph,
-          description: 'A helpful planning assistant',
-        },
-      } as any,
+        default: new HttpAgent({ url: agentUrl }),
+      },
     });
-    const handler = copilotRuntimeNestEndpoint({
+
+    this.handler = createCopilotExpressHandler({
       runtime,
-      serviceAdapter,
-      endpoint: '/copilot',
-    });
-    return handler(req, res);
+      basePath: '/copilotkit',
+      cors: false,
+    }) as unknown as RequestHandler;
+  }
+
+  @All('*')
+  handle(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Next() next: NextFunction,
+  ): void {
+    this.handler(req, res, next);
   }
 }
