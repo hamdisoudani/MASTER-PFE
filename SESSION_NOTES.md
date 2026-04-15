@@ -345,3 +345,33 @@ fuser -k 3000/tcp   # Frontend
 ---
 
 *This file is meant to be the single source of truth for the project's current state. Update it at the end of each coding session.*
+
+
+---
+
+## Session 2 — April 15, 2026 (continued)
+
+### Fix: Docker build `npm ci` failure
+
+**Problem:** Both `frontend/Dockerfile` and `backend/Dockerfile` use `npm ci` which requires a committed `package-lock.json`. Neither lockfile was in the repo — they were generated locally on the Daytona VM but never committed.
+
+**Error:**
+```
+npm error The `npm ci` command can only install with an existing package-lock.json or
+npm error npm-shrinkwrap.json with lockfileVersion >= 1.
+```
+
+**Fix:** Generated and committed both lockfiles:
+- `frontend/package-lock.json` (lockfileVersion 3, ~471KB) — commit `565bb64`
+- `backend/package-lock.json` (lockfileVersion 3, ~321KB) — commit `dc7cac0`
+
+Both generated with `npm install --package-lock-only --legacy-peer-deps` to respect the peer dependency overrides.
+
+**Important:** If you add/remove dependencies in either `package.json`, you MUST regenerate and re-commit the corresponding `package-lock.json`. Run:
+```bash
+cd frontend  # or backend
+npm install --legacy-peer-deps
+git add package-lock.json
+git commit -m "chore: update lockfile"
+git push
+```
