@@ -1,1 +1,1 @@
-"""Master PFE LangGraph agent package."""
+"""Master PFE — Python LangGraph agent package."""

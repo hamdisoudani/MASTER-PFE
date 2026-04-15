@@ -1,10 +1,3 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  async rewrites() {
-    return [{
-      source: '/api/copilotkit/:path*',
-      destination: `${process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL ?? 'http://localhost:3001/copilotkit'}/:path*`,
-    }];
-  },
-};
+const nextConfig = { output: 'standalone', reactStrictMode: true };
 module.exports = nextConfig;

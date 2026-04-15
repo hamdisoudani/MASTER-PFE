@@ -1,28 +1,49 @@
 """
-FastAPI entry point for the LangGraph CopilotKit agent.
+FastAPI entry point for the LangGraph AG-UI agent.
 
-The agent exposes the AG-UI protocol via CopilotKit's Python SDK so that
-the NestJS CopilotRuntime (or any AG-UI-compatible runtime) can route
-messages to it.
+Exposes the agent via the AG-UI protocol at POST /copilotkit
+so the NestJS CopilotRuntime (HttpAgent) can route messages to it.
 
 Run with:
-    uvicorn agent.main:app --reload --port 8000
+    uvicorn agent.main:app --host 0.0.0.0 --port 8000
 """
 import os
-from dotenv import load_dotenv
+import sys
+import types
 
+# Patch opentelemetry stubs for environments where it is broken
+for _m in [k for k in list(sys.modules) if "opentelemetry" in k]:
+    del sys.modules[_m]
+
+for _name, _attrs in [
+    ("opentelemetry", {}),
+    ("opentelemetry.context", {
+        "attach": lambda t: None,
+        "detach": lambda t: None,
+        "get_current": lambda: {},
+    }),
+    ("opentelemetry.sdk", {}),
+    ("opentelemetry.sdk.trace", {
+        "TracerProvider": type("TracerProvider", (), {}),
+    }),
+]:
+    _m = types.ModuleType(_name)
+    for _k, _v in _attrs.items():
+        setattr(_m, _k, _v)
+    sys.modules[_name] = _m
+
+from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from copilotkit import CopilotKitRemoteEndpoint
-from copilotkit.integrations.fastapi import add_fastapi_endpoint
+from ag_ui_langgraph.endpoint import add_langgraph_fastapi_endpoint
 from copilotkit import LangGraphAGUIAgent
 from .graph import graph
 
 app = FastAPI(
     title="Master PFE — LangGraph Agent",
-    description="CopilotKit-compatible AG-UI agent powered by LangGraph",
+    description="AG-UI agent powered by LangGraph + NVIDIA NIM",
     version="1.0.0",
 )
 
@@ -33,34 +54,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-sdk = CopilotKitRemoteEndpoint(
-    agents=[
-        LangGraphAGUIAgent(
-            name="default",
-            description=(
-                "A general-purpose AI assistant that can chat, plan, "
-                "and use frontend tools."
-            ),
-            graph=graph,
-        )
-    ]
+agent = LangGraphAGUIAgent(
+    name="default",
+    description="A general-purpose AI assistant powered by NVIDIA NIM.",
+    graph=graph,
 )
 
-add_fastapi_endpoint(app, sdk, "/copilotkit")
+add_langgraph_fastapi_endpoint(app, agent, "/copilotkit")
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    """Simple liveness probe."""
-    return {"status": "ok"}
+async def health() -> dict:
+    return {
+        "status": "ok",
+        "agent": "default",
+        "llm": os.getenv("LLM_MODEL", "unknown"),
+    }
 
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(
         "agent.main:app",
         host=os.getenv("AGENT_HOST", "0.0.0.0"),
         port=int(os.getenv("AGENT_PORT", "8000")),
-        reload=True,
+        reload=False,
     )
