@@ -1,4 +1,4 @@
-"""LLM factory — ChatOpenAI pointed at NVIDIA NIM."""
+"""LLM factory \u2014 ChatOpenAI pointed at NVIDIA NIM."""
 import os
 from langchain_openai import ChatOpenAI
 
@@ -10,3 +10,7 @@ def get_llm() -> ChatOpenAI:
         model=os.getenv("LLM_MODEL", "mistralai/mistral-small-4-119b-2603"),
         streaming=True,
     )
+
+
+# Alias used by nodes.py
+build_llm = get_llm
