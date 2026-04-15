@@ -5,7 +5,7 @@ import { Request, Response } from 'express';
 
 @Controller('copilotkit')
 export class CopilotController {
-  @All('*')
+  @All('*path')
   async copilotEndpoint(@Req() req: Request, @Res() res: Response) {
     const agentUrl =
       process.env.AGENT_URL ?? 'http://localhost:8000/copilotkit';
