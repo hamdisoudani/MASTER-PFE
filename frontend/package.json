@@ -5,19 +5,20 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start -p ${PORT:-3000}"
   },
   "dependencies": {
-    "@copilotkit/react-core": "^1.8.14",
-    "@copilotkit/react-ui": "^1.8.14",
-    "next": "14.2.5",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "@copilotkit/react-core": "1.56.0",
+    "@copilotkit/react-ui": "1.56.0",
+    "next": "15.3.9",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/react": "^18.3.1",
-    "@types/react-dom": "^18.3.0",
-    "typescript": "^5.0.0"
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.8.0"
   }
 }

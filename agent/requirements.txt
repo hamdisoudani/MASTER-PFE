@@ -1,5 +1,12 @@
-fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
-python-dotenv>=1.0.1
-langchain-openai>=0.1.17
-langgraph>=0.2.0
+# Web framework & server
+fastapi==0.135.3
+uvicorn[standard]==0.44.0
+python-dotenv==1.2.2
+
+# LangGraph + LLM
+langgraph==1.1.6
+langchain-openai==1.1.13
+
+# AG-UI / CopilotKit integration
+ag-ui-langgraph==0.0.33
+copilotkit==0.1.87
