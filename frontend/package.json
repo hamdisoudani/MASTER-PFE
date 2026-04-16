@@ -9,12 +9,18 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@blocknote/core": "^0.48.0",
+    "@blocknote/mantine": "^0.48.0",
+    "@blocknote/react": "^0.48.0",
     "@copilotkit/react-core": "1.56.0",
     "@copilotkit/react-ui": "1.56.0",
+    "@mantine/core": "^7.15.0",
+    "@mantine/hooks": "^7.15.0",
     "next": "15.5.15",
     "react": "19.2.5",
     "react-dom": "19.2.5",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "zustand": "^4.5.2"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",
