@@ -19,11 +19,11 @@ export default function Home() {
           </h1>
           <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-[var(--border)] bg-[var(--muted)]/40 text-[10px] font-medium text-[var(--muted-foreground)] tracking-wide uppercase">
             <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary)] animate-pulse" />
-            Mistral \u00d7 NVIDIA NIM
+            Mistral × NVIDIA NIM
           </div>
         </div>
         <span className="text-xs text-[var(--muted-foreground)]/40">
-          CopilotKit \u00b7 LangGraph \u00b7 NestJS
+          CopilotKit · LangGraph · NestJS
         </span>
       </header>
 
@@ -32,7 +32,7 @@ export default function Home() {
         <CopilotChat
           labels={{
             title: 'AI Copilot',
-            initial: "\ud83d\udc4b Hello! I'm your AI assistant powered by Mistral via NVIDIA NIM. How can I help you today?",
+            initial: "👋 Hello! I'm your AI assistant powered by Mistral via NVIDIA NIM. How can I help you today?",
           }}
           className="h-full"
         />
