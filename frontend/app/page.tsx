@@ -4,29 +4,31 @@ import '@copilotkit/react-ui/styles.css';
 
 export default function Home() {
   return (
-    <main className="flex flex-col items-center justify-center min-h-screen p-4 md:p-8">
+    <div className="flex flex-col h-screen">
       {/* Subtle gradient orb background */}
       <div className="fixed inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-[-20%] left-[-10%] w-[60vw] h-[60vw] rounded-full bg-[#f66e60]/[0.06] blur-[120px]" />
-        <div className="absolute bottom-[-15%] right-[-10%] w-[50vw] h-[50vw] rounded-full bg-[#fcaf41]/[0.05] blur-[120px]" />
+        <div className="absolute top-[-20%] left-[-10%] w-[60vw] h-[60vw] rounded-full bg-[#f66e60]/[0.04] blur-[120px]" />
+        <div className="absolute bottom-[-15%] right-[-10%] w-[50vw] h-[50vw] rounded-full bg-[#fcaf41]/[0.03] blur-[120px]" />
       </div>
 
-      {/* Header */}
-      <div className="text-center mb-6 md:mb-8">
-        <div className="inline-flex items-center gap-2 px-3 py-1 mb-4 rounded-full border border-[var(--border)] bg-[var(--muted)]/50 text-xs font-medium text-[var(--muted-foreground)] tracking-wide uppercase">
-          <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary)] animate-pulse" />
-          Powered by Mistral × NVIDIA NIM
+      {/* Top bar */}
+      <header className="flex items-center justify-between px-4 md:px-6 h-14 border-b border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-sm shrink-0 z-10">
+        <div className="flex items-center gap-3">
+          <h1 className="text-base font-semibold text-[var(--foreground)] tracking-tight">
+            Master PFE
+          </h1>
+          <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-[var(--border)] bg-[var(--muted)]/40 text-[10px] font-medium text-[var(--muted-foreground)] tracking-wide uppercase">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary)] animate-pulse" />
+            Mistral \u00d7 NVIDIA NIM
+          </div>
         </div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-[var(--foreground)]">
-          Master PFE
-        </h1>
-        <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-          Your AI-powered research &amp; planning assistant
-        </p>
-      </div>
+        <span className="text-xs text-[var(--muted-foreground)]/40">
+          CopilotKit \u00b7 LangGraph \u00b7 NestJS
+        </span>
+      </header>
 
-      {/* Chat container */}
-      <div className="w-full max-w-2xl flex-1 min-h-0" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+      {/* Chat fills remaining space */}
+      <main className="flex-1 min-h-0">
         <CopilotChat
           labels={{
             title: 'AI Copilot',
@@ -34,12 +36,7 @@ export default function Home() {
           }}
           className="h-full"
         />
-      </div>
-
-      {/* Footer */}
-      <div className="mt-4 text-xs text-[var(--muted-foreground)]/60">
-        Built with CopilotKit · LangGraph · NestJS
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
