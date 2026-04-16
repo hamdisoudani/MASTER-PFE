@@ -19,14 +19,11 @@ from .state import AgentState
 from .llm import get_llm
 from .tools import PYTHON_TOOLS
 
-# ---- Python tool executor (used by graph.py) ---------------------------------
 tools_node = ToolNode(PYTHON_TOOLS)
 PYTHON_TOOL_NAMES = {t.name for t in PYTHON_TOOLS}
-# ------------------------------------------------------------------------------
 
 
 def _get_frontend_tool_names(state: AgentState) -> set:
-    """Return the set of frontend tool names sent by the browser via AG-UI."""
     ck = state.get("copilotkit") or {}
     actions = (
         ck.get("actions") or []
@@ -44,10 +41,6 @@ def _get_frontend_tool_names(state: AgentState) -> set:
                 names.add(name)
     return names
 
-
-# ------------------------------------------------------------------------------
-# Summarization middleware
-# ------------------------------------------------------------------------------
 
 MAX_MESSAGES = 30
 KEEP_RECENT  = 14
@@ -82,26 +75,18 @@ async def _maybe_summarize(messages: list, llm) -> list:
     except Exception:
         summary = "[Summary unavailable -- context compressed.]"
 
-    compressed = SystemMessage(
-        content=f"[Prior conversation -- compressed]\n{summary}"
-    )
+    compressed = SystemMessage(content=f"[Prior conversation -- compressed]\n{summary}")
     return [compressed] + list(recent)
 
 
-# ------------------------------------------------------------------------------
-# System prompt
-# ------------------------------------------------------------------------------
-
-SYSTEM_PROMPT = """\
-You are Syllabus AI -- an expert course-creation assistant for educators.
+SYSTEM_PROMPT = """You are Syllabus AI -- an expert course-creation assistant for educators.
 
 You have two categories of tools:
   * RESEARCH tools  (Python, server-side): plan_tasks, update_plan_task, search_web, scrape_website
   * COURSE-BUILDING tools (frontend, browser-side): create_syllabus, add_chapter, add_lesson,
     update_lesson_content, remove_chapter, remove_lesson
 
-Both sets are REAL callable tools. Call them as tool/function calls -- never describe their
-output in plain text.
+Both sets are REAL callable tools. Call them as tool/function calls -- never describe their output in plain text.
 
 CRITICAL RULES
 ==============
@@ -113,8 +98,7 @@ RULE 1 -- ALWAYS USE TOOL CALLS, NEVER PLAIN TEXT
 
 RULE 2 -- ONE COURSE-BUILDING TOOL CALL PER RESPONSE
   Call exactly one frontend tool per response (add_chapter OR add_lesson, not both).
-  You can combine one backend tool (update_plan_task) with one frontend tool in the
-  same response if needed.
+  You can combine one backend tool (update_plan_task) with one frontend tool if needed.
 
 RULE 3 -- COMPLETE ALL PLANNED STEPS
   Execute every step you planned. Never pause mid-plan to ask for permission.
@@ -124,122 +108,84 @@ WORKFLOW
 ========
 
 1. PLAN
-   plan_tasks(tasks: list[str])
-     -> List every step before starting. Call this once.
+   plan_tasks(tasks: list[str]) -> List every step before starting. Call this once.
    update_plan_task(task_id: int, status: "pending"|"in_progress"|"done")
-     -> Before each step call (in_progress), after each step call (done).
+     -> Before each step: in_progress. After each step: done.
 
-2. RESEARCH  (one search per lesson topic is enough)
+2. RESEARCH (one search per lesson topic is enough)
    search_web(query, country="us", num_results=6)
    scrape_website(url: str)
 
-3. BUILD  (frontend tools -- called as tool calls, executed by the browser)
-   create_syllabus(id, title, subject, description?)
-     -> id is a url-friendly slug, e.g. "python-beginners". Call once.
+3. BUILD (frontend tools -- executed by the browser via AG-UI execute hooks)
+   create_syllabus(id, title, subject, description?)   -> id = url slug, call once
    add_chapter(syllabusId, chapterId, title, description?)
-     -> Add all chapters before adding lessons.
-   add_lesson(chapterId, lessonId, title, content)
-     -> content = BlockNote JSON array (see format below, min 6 blocks).
+   add_lesson(chapterId, lessonId, title, content)     -> content = BlockNote JSON array
    update_lesson_content(lessonId, content)
    remove_chapter(chapterId) / remove_lesson(lessonId)
 
-BLOCKNOTE JSON -- content format for add_lesson
-================================================
-
-Pass as the `content` argument to add_lesson(). Minimum 6 blocks:
+BLOCKNOTE JSON -- content format for add_lesson (minimum 6 blocks)
+==================================================================
 
 [
   { "id": "<lessonId>-h1", "type": "heading",
     "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left", "level": 1 },
     "content": [{ "type": "text", "text": "Lesson Title", "styles": {} }], "children": [] },
-
   { "id": "<lessonId>-p1", "type": "paragraph",
     "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left" },
-    "content": [{ "type": "text", "text": "Engaging intro paragraph.", "styles": {} }], "children": [] },
-
+    "content": [{ "type": "text", "text": "Engaging intro.", "styles": {} }], "children": [] },
   { "id": "<lessonId>-h2", "type": "heading",
     "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left", "level": 2 },
     "content": [{ "type": "text", "text": "Section Title", "styles": {} }], "children": [] },
-
   { "id": "<lessonId>-b1", "type": "bulletListItem",
     "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left" },
-    "content": [{ "type": "text", "text": "Key point from research.", "styles": {} }], "children": [] },
-
+    "content": [{ "type": "text", "text": "Key point.", "styles": {} }], "children": [] },
   { "id": "<lessonId>-b2", "type": "bulletListItem",
     "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left" },
-    "content": [{ "type": "text", "text": "Another key point.", "styles": {} }], "children": [] },
-
+    "content": [{ "type": "text", "text": "Another point.", "styles": {} }], "children": [] },
   { "id": "<lessonId>-p2", "type": "paragraph",
     "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left" },
-    "content": [{ "type": "text", "text": "Summary and bridge to next lesson.", "styles": {} }], "children": [] }
+    "content": [{ "type": "text", "text": "Summary / bridge to next lesson.", "styles": {} }], "children": [] }
 ]
 
-STRICT rules:
-  * Every id is globally unique and prefixed with lessonId
-  * "content" is always an array (never null, never a string)
-  * "children" is always []
-  * heading blocks MUST have "level": 1|2|3 in props
-  * codeBlock blocks MUST have "language": "python"|"js"|"bash" in props
+STRICT: content is always an array, children is always [], ids are unique and prefixed with lessonId,
+heading needs level in props, codeBlock needs language in props.
 
-EXAMPLE -- correct execution pattern
-=====================================
+EXAMPLE
+=======
 
 User: "build a Python basics course"
-
-Turn 1:  plan_tasks(["Research", "create_syllabus", "add_chapter ch1", "add_lesson l1-1", "add_lesson l1-2"])
+Turn 1:  plan_tasks(["Research","create_syllabus","add_chapter ch1","add_lesson l1-1","add_lesson l1-2"])
 Turn 2:  update_plan_task(0,"in_progress") + search_web("Python basics variables")
 Turn 3:  update_plan_task(0,"done") + update_plan_task(1,"in_progress") + create_syllabus("python-basics","Python Basics","Programming")
 Turn 4:  update_plan_task(1,"done") + update_plan_task(2,"in_progress") + add_chapter("python-basics","ch1","Getting Started")
 Turn 5:  update_plan_task(2,"done") + update_plan_task(3,"in_progress") + add_lesson("ch1","l1-1","Variables",[<BlockNote JSON>])
 Turn 6:  update_plan_task(3,"done") + update_plan_task(4,"in_progress") + add_lesson("ch1","l1-2","Loops",[<BlockNote JSON>])
-Turn 7:  update_plan_task(4,"done") -- "Course complete! Created 1 chapter and 2 lessons."
+Turn 7:  update_plan_task(4,"done") -- "Course complete!"
 """
 
-
-# ------------------------------------------------------------------------------
-# Main chat node
-# ------------------------------------------------------------------------------
 
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
     """
     Main LLM node. Binds all tools (Python + frontend) to the LLM and invokes it.
-    AG-UI handles frontend tool execution (execute hooks) automatically -- no
-    manual interception needed here.
+    AG-UI handles frontend tool execution via execute hooks -- no manual interception needed.
     """
     ck = state.get("copilotkit") or {}
     ck_dict = ck if isinstance(ck, dict) else {}
 
-    # ------------------------------------------------------------------
-    # 1. Gather messages and frontend tool definitions from state
-    # ------------------------------------------------------------------
     raw_messages     = list(state["messages"])
     frontend_actions = ck_dict.get("actions") or []
 
-    # ------------------------------------------------------------------
-    # 2. Build LLM bound to all tools (Python + frontend)
-    # ------------------------------------------------------------------
     llm            = get_llm()
     all_tools      = list(PYTHON_TOOLS) + list(frontend_actions)
     llm_with_tools = llm.bind_tools(all_tools) if all_tools else llm
 
-    # ------------------------------------------------------------------
-    # 3. Optionally compress message history
-    # ------------------------------------------------------------------
     summarized = await _maybe_summarize(raw_messages, llm)
     messages   = [SystemMessage(content=SYSTEM_PROMPT)] + summarized
 
-    # ------------------------------------------------------------------
-    # 4. Invoke LLM
-    # ------------------------------------------------------------------
     response = await llm_with_tools.ainvoke(messages, config=config)
 
-    state_updates: dict = {
-        "messages": [response],
-    }
+    state_updates: dict = {"messages": [response]}
 
-    # ------------------------------------------------------------------
-    # 5. Extract ToolMessage results -> update live UI state fields
-    # ------------------------------------------------------------------
     current_plan: list = list(state.get("plan") or [])
 
     for msg in raw_messages:
