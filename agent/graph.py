@@ -1,40 +1,35 @@
+"""LangGraph state machine for Syllabus AI."""
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.prebuilt import ToolNode
 
-from agent.state import AgentState
-from agent.nodes import chat_node, tools_node, PYTHON_TOOL_NAMES
+from .state import AgentState
+from .nodes import chat_node, PYTHON_TOOL_NAMES
+from .tools import PYTHON_TOOLS
 
 
-def _should_continue(state: AgentState):
+def _should_continue(state: AgentState) -> str:
     """
     Route after chat_node:
-      - No tool calls           -> END  (plain assistant reply)
-      - Has backend tool calls  -> "tools"  (server-side execution)
-      - Frontend-only calls     -> END  (ag-ui handles execute callbacks;
-                                        real results injected on next request)
-
-    For mixed calls (backend + frontend in the same AIMessage), tools_node
-    runs the Python tools and injects ag-ui orphan ToolMessages for the
-    frontend calls so the LLM gets a complete ToolMessage sequence this turn,
-    and ag-ui replaces the orphan messages with real results next turn.
+      - No tool calls          -> END  (plain assistant reply)
+      - Has Python tool calls  -> "tools"  (server-side execution)
+      - Frontend-only calls    -> END  (AG-UI / CopilotKit handles execute
+                                       callbacks on the client; results are
+                                       injected back before the next turn)
     """
-    last = state["messages"][-1]
-    if not (hasattr(last, "tool_calls") and last.tool_calls):
+    messages = state.get("messages") or []
+    if not messages:
         return END
-
-    has_backend = any(
-        tc.get("name") in PYTHON_TOOL_NAMES
-        for tc in last.tool_calls
-    )
-    return "tools" if has_backend else END
+    last = messages[-1]
+    tool_calls = getattr(last, "tool_calls", None) or []
+    has_python_call = any(tc.get("name") in PYTHON_TOOL_NAMES for tc in tool_calls)
+    return "tools" if has_python_call else END
 
 
 def build_graph(checkpointer: BaseCheckpointSaver):
     builder = StateGraph(AgentState)
-
-    builder.add_node("chat",  chat_node)
-    builder.add_node("tools", tools_node)
-
+    builder.add_node("chat", chat_node)
+    builder.add_node("tools", ToolNode(PYTHON_TOOLS))
     builder.set_entry_point("chat")
     builder.add_conditional_edges(
         "chat",
@@ -42,6 +37,5 @@ def build_graph(checkpointer: BaseCheckpointSaver):
         {"tools": "tools", END: END},
     )
     builder.add_edge("tools", "chat")
-
-    # recursion_limit is set via LangGraphAGUIAgent(config=agui_config) in main.py
+    # recursion_limit is set via LangGraphAGUIAgent(config=...) in main.py
     return builder.compile(checkpointer=checkpointer)
