@@ -4,24 +4,30 @@ chat_node  — main LLM node with:
   - Binds Python tools + CopilotKit frontend tools to the LLM
   - Extracts ToolMessage results and persists them into named state fields
     so the frontend can render plan/search/scrape live
+
+tools_node — ToolNode that executes the Python-side tools
 """
 import json
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.prebuilt import ToolNode
 
 from .state import AgentState
 from .llm import get_llm
 from .tools import PYTHON_TOOLS
 
+# ---- tool executor node (used by graph.py) -----------------------------------
+tools_node = ToolNode(PYTHON_TOOLS)
+# ------------------------------------------------------------------------------
+
 PYTHON_TOOL_NAMES = {"plan_tasks", "update_plan_task", "search_web", "scrape_website"}
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Summarization middleware
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 MAX_MESSAGES = 20     # compress when history exceeds this count
 KEEP_RECENT = 8       # always keep the last N messages verbatim
-
 
 async def _maybe_summarize(messages: list, llm) -> list:
     """
@@ -62,10 +68,9 @@ async def _maybe_summarize(messages: list, llm) -> list:
     )
     return [compressed] + list(recent)
 
-
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # System prompt
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
 You are Syllabus AI — an expert course-creation assistant for educators.
@@ -175,10 +180,9 @@ If renderErrors is non-empty → call update_lesson_content immediately.
 After all tool calls → confirm in natural language what was built.
 """
 
-
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Main chat node
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
     """
@@ -232,7 +236,6 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
                 for t in current_plan
             ]
             state_updates["plan"] = current_plan
-            # Update activity label
             task_label = next(
                 (t["task"] for t in current_plan if t["id"] == task_id), ""
             )
@@ -245,7 +248,7 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
 
         elif tool_name == "search_web" and isinstance(data, dict) and "results" in data:
             state_updates["search_results"] = data
-            state_updates["current_activity"] = f'Searched: "{data.get("query", "")}"'
+            state_updates["current_activity"] = f'Searched: "{data.get("query", "")}"\''
 
         elif tool_name == "scrape_website" and isinstance(data, dict) and "content" in data:
             state_updates["scraped_content"] = data
