@@ -1,14 +1,19 @@
 """
-chat_node  — main LLM node with:
+chat_node  — main LLM node.
   - Summarization middleware: compresses old messages when history > MAX_MESSAGES
   - Binds Python tools + CopilotKit frontend tools to the LLM
+  - Intercepts frontend tool calls so tools_node never tries to execute them
+    (frontend tool calls are emitted to the browser via AG-UI streaming and
+    executed there; they must not go through the Python ToolNode)
+  - Restores intercepted frontend tool calls to the AIMessage after ToolNode
+    ran, so the checkpoint / LLM context stays coherent
   - Extracts ToolMessage results and persists them into named state fields
     so the frontend can render plan/search/scrape live
 
-tools_node — ToolNode that executes the Python-side tools
+tools_node — ToolNode that executes Python-side tools only
 """
 import json
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt import ToolNode
 
@@ -16,25 +21,42 @@ from .state import AgentState
 from .llm import get_llm
 from .tools import PYTHON_TOOLS
 
-# ---- tool executor node (used by graph.py) -----------------------------------
+# ---- Python tool executor (used by graph.py) ---------------------------------
 tools_node = ToolNode(PYTHON_TOOLS)
+PYTHON_TOOL_NAMES = {t.name for t in PYTHON_TOOLS}
 # ------------------------------------------------------------------------------
 
-PYTHON_TOOL_NAMES = {"plan_tasks", "update_plan_task", "search_web", "scrape_website"}
+
+def _get_frontend_tool_names(state: AgentState) -> set:
+    """Return the set of frontend tool names sent from the browser."""
+    ck = state.get("copilotkit") or {}
+    actions = (
+        ck.get("actions") or []
+        if isinstance(ck, dict)
+        else getattr(ck, "actions", None) or []
+    )
+    names: set = set()
+    for a in actions:
+        if isinstance(a, dict):
+            # OpenAI schema: {"type": "function", "function": {"name": "..."}}
+            name = (
+                (a.get("function") or {}).get("name")
+                or a.get("name")
+            )
+            if name:
+                names.add(name)
+    return names
+
 
 # ------------------------------------------------------------------------------
 # Summarization middleware
 # ------------------------------------------------------------------------------
 
-MAX_MESSAGES = 20     # compress when history exceeds this count
-KEEP_RECENT = 8       # always keep the last N messages verbatim
+MAX_MESSAGES = 20
+KEEP_RECENT = 8
+
 
 async def _maybe_summarize(messages: list, llm) -> list:
-    """
-    When the message list is too long, compress the oldest messages into a
-    single SystemMessage summary so we never blow the context window.
-    The most recent KEEP_RECENT messages are always kept verbatim.
-    """
     if len(messages) <= MAX_MESSAGES:
         return messages
 
@@ -67,6 +89,7 @@ async def _maybe_summarize(messages: list, llm) -> list:
         content=f"[Prior conversation — compressed]\n{summary_content}"
     )
     return [compressed] + list(recent)
+
 
 # ------------------------------------------------------------------------------
 # System prompt
@@ -187,30 +210,101 @@ After all tool calls → confirm in natural language what was built.
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
     """
     Main agent node:
-    1. Compress message history if it's too long (summarization middleware)
-    2. Bind all tools (Python + CopilotKit frontend) to the LLM
-    3. Invoke the LLM
-    4. Extract ToolMessage results → update plan/search/scrape state fields
+    1. Restore any intercepted frontend tool calls from the previous cycle
+    2. Compress message history if it's too long
+    3. Bind all tools (Python + CopilotKit frontend) to the LLM
+    4. Invoke the LLM
+    5. Intercept frontend tool calls so tools_node never tries to execute them:
+       - frontend-only call  → keep full AIMessage (AG-UI already streamed it to
+         the browser); graph will END via _should_continue
+       - mixed (backend + frontend) → store a backend-only AIMessage so
+         tools_node only executes backend calls; stash the frontend calls in
+         copilotkit.intercepted_tool_calls for restoration on the next cycle
+    6. Extract ToolMessage results → update plan/search/scrape state fields
     """
     ck = state.get("copilotkit") or {}
-    frontend_actions = (
-        ck.get("actions") or [] if isinstance(ck, dict)
-        else getattr(ck, "actions", None) or []
-    )
+    ck_dict = ck if isinstance(ck, dict) else {}
 
+    # ------------------------------------------------------------------
+    # 1. Restore intercepted frontend tool calls from the previous cycle.
+    #    After tools_node ran for backend calls, we put the frontend calls
+    #    back into the AIMessage so the LLM sees a coherent history.
+    # ------------------------------------------------------------------
+    intercepted = ck_dict.get("intercepted_tool_calls") or []
+    original_msg_id = ck_dict.get("original_ai_message_id")
+    raw_messages = list(state["messages"])
+
+    if intercepted and original_msg_id:
+        for idx, msg in enumerate(raw_messages):
+            if isinstance(msg, AIMessage) and msg.id == original_msg_id:
+                restored = AIMessage(
+                    content=msg.content,
+                    tool_calls=list(getattr(msg, "tool_calls", []) or []) + list(intercepted),
+                    id=msg.id,
+                )
+                raw_messages[idx] = restored
+                break
+        # Clear the intercept bookkeeping from state
+        ck_dict = {
+            **ck_dict,
+            "intercepted_tool_calls": None,
+            "original_ai_message_id": None,
+        }
+
+    # ------------------------------------------------------------------
+    # 2. Determine which tools are frontend actions
+    # ------------------------------------------------------------------
+    frontend_actions = ck_dict.get("actions") or []
+    frontend_tool_names = _get_frontend_tool_names(state)
+
+    # ------------------------------------------------------------------
+    # 3. Build and invoke the LLM
+    # ------------------------------------------------------------------
     llm = get_llm()
     all_tools = list(PYTHON_TOOLS) + list(frontend_actions)
     llm_with_tools = llm.bind_tools(all_tools) if all_tools else llm
 
-    raw_messages = list(state["messages"])
     summarized_messages = await _maybe_summarize(raw_messages, llm)
-
     messages = [SystemMessage(content=SYSTEM_PROMPT)] + summarized_messages
     response = await llm_with_tools.ainvoke(messages, config=config)
 
-    state_updates: dict = {"messages": [response]}
+    # ------------------------------------------------------------------
+    # 4. Intercept frontend tool calls before storing into state.
+    #    tools_node must only ever see Python-side tool calls.
+    # ------------------------------------------------------------------
+    tool_calls = getattr(response, "tool_calls", None) or []
+    frontend_calls = [tc for tc in tool_calls if tc.get("name") in frontend_tool_names]
+    backend_calls  = [tc for tc in tool_calls if tc.get("name") not in frontend_tool_names]
 
-    # Carry forward the current plan so update_plan_task can mutate it
+    if frontend_calls and backend_calls:
+        # Mixed: store a backend-only AIMessage so tools_node doesn't error
+        # on the frontend calls.  Stash them for restoration next cycle.
+        backend_msg = AIMessage(
+            content=response.content,
+            tool_calls=backend_calls,
+            id=response.id,
+        )
+        stored_messages = [backend_msg]
+        ck_dict = {
+            **ck_dict,
+            "intercepted_tool_calls": frontend_calls,
+            "original_ai_message_id": response.id,
+        }
+    else:
+        # Frontend-only or backend-only (or no tool calls): store as-is.
+        # For frontend-only calls, _should_continue returns END so tools_node
+        # is never reached; the AG-UI framework already streamed the tool
+        # call events to the browser during LLM streaming.
+        stored_messages = [response]
+
+    state_updates: dict = {
+        "messages": stored_messages,
+        "copilotkit": ck_dict,
+    }
+
+    # ------------------------------------------------------------------
+    # 5. Extract ToolMessage results → update live UI state fields
+    # ------------------------------------------------------------------
     current_plan: list = list(state.get("plan") or [])
 
     for msg in raw_messages:
@@ -248,7 +342,7 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
 
         elif tool_name == "search_web" and isinstance(data, dict) and "results" in data:
             state_updates["search_results"] = data
-            state_updates["current_activity"] = f'Searched: "{data.get("query", "")}"\''
+            state_updates["current_activity"] = f'Searched: "{data.get("query", "")}"'
 
         elif tool_name == "scrape_website" and isinstance(data, dict) and "content" in data:
             state_updates["scraped_content"] = data
