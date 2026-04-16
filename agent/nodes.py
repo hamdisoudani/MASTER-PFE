@@ -80,7 +80,7 @@ def _build_system_prompt(state: AgentState) -> str:
         "- web_search(query) → returns search results\n"
         "- scrape_page(url) → returns page content\n\n"
         "## BlockNote content format\n"
-        "Every lesson\'s `content` field must be a valid BlockNote JSON array.\n"
+        "Every lesson's `content` field must be a valid BlockNote JSON array.\n"
         "Each block:\n"
         "  { type, props?, content?, children? }\n\n"
         "Supported block types and their props:\n"
@@ -96,11 +96,11 @@ def _build_system_prompt(state: AgentState) -> str:
         "  file               – props: url, name, caption\n"
         "  codeBlock          – props: language\n\n"
         "Inline content array (used in most block types):\n"
-        "  { type: \'text\', text: \'..\', styles?: { bold, italic, underline,\n"
+        "  { type: 'text', text: '..', styles?: { bold, italic, underline,\n"
         "    strikethrough, code, textColor, backgroundColor } }\n"
-        "  { type: \'link\', href: \'..\', content: [text nodes] }\n\n"
+        "  { type: 'link', href: '..', content: [text nodes] }\n\n"
         "Table format:\n"
-        "  content: { type: \'tableContent\', rows: [\n"
+        "  content: { type: 'tableContent', rows: [\n"
         "    { cells: [ [inlineContent], ... ] }\n"
         "  ]}\n\n"
         "RULES:\n"
@@ -115,8 +115,8 @@ def _build_system_prompt(state: AgentState) -> str:
     if ctx_entries:
         ctx_lines = ["## Current editor state"]
         for entry in ctx_entries:
-            desc  = entry.get("description", "")
-            raw   = entry.get("value", "[]")
+            desc  = entry.description if hasattr(entry, "description") else entry.get("description", "")
+            raw   = entry.value if hasattr(entry, "value") else entry.get("value", "[]")
             try:
                 parsed = json.loads(raw) if isinstance(raw, str) else raw
                 value_str = json.dumps(parsed, indent=2)
