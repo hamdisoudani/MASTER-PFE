@@ -2,6 +2,15 @@
 
 > **Full-stack AI copilot** powered by LangGraph (Python), NestJS (gateway), Next.js (UI), and NVIDIA NIM as the LLM provider.
 
+---
+
+## ⚠️ Read SESSION_NOTES.md First
+
+Before making any changes, read **[SESSION_NOTES.md](./SESSION_NOTES.md)**.
+It contains strict rules (agent name sync, single CopilotKit provider, hardcoded backend URL) that were learned from real bugs. Skipping it will reproduce the same broken states.
+
+---
+
 ## Architecture
 
 ```
@@ -100,11 +109,12 @@ Uses `langchain_openai.ChatOpenAI` with `base_url=https://integrate.api.nvidia.c
 
 ```
 .
-├── agent/          # Python FastAPI + LangGraph (port 8000)
-├── backend/        # NestJS CopilotKit Runtime (port 3001)
-├── frontend/       # Next.js UI (port 3000)
+├── agent/              # Python FastAPI + LangGraph (port 8000)
+├── backend/            # NestJS CopilotKit Runtime (port 3001)
+├── frontend/           # Next.js UI (port 3000)
 ├── docker-compose.yml
 ├── cloudflare-tunnel.sh
+├── SESSION_NOTES.md    # ← READ THIS FIRST before any session
 └── README.md
 ```
 
