@@ -6,6 +6,10 @@ python-dotenv==1.2.2
 # LangGraph + LLM
 langgraph==1.1.6
 langchain-openai==1.1.13
+langchain-core==0.3.65
+
+# HTTP client for Serper API
+httpx==0.27.2
 
 # AG-UI / CopilotKit integration
 ag-ui-langgraph==0.0.33

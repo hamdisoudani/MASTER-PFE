@@ -1,24 +1,18 @@
-"""Agent state definitions."""
-from typing import Optional, Literal
+"""Agent state — extends CopilotKitState with UI-renderable fields."""
+from typing import Optional
 from copilotkit import CopilotKitState
 
 
 class AgentState(CopilotKitState):
     """
-    Full agent state that extends CopilotKitState.
-
-    CopilotKitState already includes:
-      - messages: list of LangChain BaseMessage
-      - copilotkit: CopilotKitProperties (actions, context, ...)
-
-    We add application-specific fields here.
+    plan            → list of {id, task, status} set by plan_tasks tool
+    search_results  → {query, results:[{title,url,snippet}]} set by search_web
+    scraped_content → {url, title, content} set by scrape_website
+    current_activity→ human-readable string of what the agent is doing
+    finished        → True once the agent is done with a task
     """
-
-    # Current plan produced by the planner node
-    plan: Optional[list[str]] = None
-
-    # High-level mode the agent is operating in
-    mode: Literal["chat", "research", "plan"] = "chat"
-
-    # Whether the last run finished
+    plan: Optional[list] = None
+    search_results: Optional[dict] = None
+    scraped_content: Optional[dict] = None
+    current_activity: Optional[str] = None
     finished: bool = False
