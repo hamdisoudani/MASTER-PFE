@@ -2,7 +2,11 @@
 FastAPI entry point for the LangGraph AG-UI agent.
 
 Exposes the agent via the AG-UI protocol at POST /copilotkit
-so the NestJS CopilotRuntime (HttpAgent) can route messages to it.
+so the NestJS CopilotRuntime (LangGraphHttpAgent) can route messages to it.
+
+Agent name 'syllabus_agent' must match:
+  - backend copilot.controller.ts  -> agents: { syllabus_agent: ... }
+  - frontend page.tsx              -> <CopilotKit agent='syllabus_agent'>
 
 Run with:
     uvicorn agent.main:app --host 0.0.0.0 --port 8000
@@ -16,7 +20,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ag_ui_langgraph.endpoint import add_langgraph_fastapi_endpoint
 from copilotkit import LangGraphAGUIAgent
-from copilotkit.langgraph import copilotkit_customize_config
 
 from agent.checkpointer import get_checkpointer, close_checkpointer
 from agent.graph import build_graph
@@ -39,45 +42,30 @@ def _safe_json_loads(s, *args, **kwargs):
 _json.loads = _safe_json_loads
 # ---------------------------------------------------------------------------
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # --- startup ---
     checkpointer = await get_checkpointer()
     graph = build_graph(checkpointer)
 
-    # Build CopilotKit / AG-UI config.
-    # copilotkit_customize_config tells CopilotKit which tool calls to stream to
-    # the frontend as visible events. emit_messages=True streams AI text tokens.
-    # We then set recursion_limit directly on the dict — this is the pattern from
-    # official CopilotKit deep-agents examples and is the ONLY way to have the
-    # AG-UI layer respect a non-default recursion limit.
-    agui_config = copilotkit_customize_config(
-        emit_tool_calls=[
-            "plan_tasks",
-            "update_plan_task",
-            "search_web",
-            "scrape_website",
-        ],
-        emit_messages=True,
-    )
-    # A full course: plan(1) + N*(research+build) turns — 150 is a safe ceiling.
-    agui_config["recursion_limit"] = 150
+    # Only set recursion_limit — AG-UI / CopilotKit handle tool dispatch
+    # for both frontend and backend tools automatically.
+    agui_config = {"recursion_limit": 150}
 
     agent = LangGraphAGUIAgent(
-        name="default",
-        description="A general-purpose AI assistant powered by NVIDIA NIM.",
+        name="syllabus_agent",
+        description="Course syllabus builder powered by NVIDIA NIM. Creates structured syllabi with chapters and rich BlockNote lesson content.",
         graph=graph,
         config=agui_config,
     )
 
-    # Register the AG-UI endpoint
     add_langgraph_fastapi_endpoint(app, agent, "/copilotkit")
     logger.info("Agent ready.")
 
     yield
 
-    # --- shutdown ---
     await close_checkpointer()
+
 
 app = FastAPI(
     title="Master PFE — LangGraph Agent",
@@ -93,13 +81,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health")
 async def health() -> dict:
     return {
         "status": "ok",
-        "agent": "default",
+        "agent": "syllabus_agent",
         "llm": os.getenv("LLM_MODEL", "unknown"),
     }
+
 
 if __name__ == "__main__":
     import uvicorn
