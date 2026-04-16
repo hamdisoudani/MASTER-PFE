@@ -25,7 +25,6 @@ html, body { height: 100%; }
   --ring: #f66e60;
   --destructive: #ff6366;
   --radius: 0.75rem;
-
   --font-sans: 'Nunito Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'Fira Code', ui-monospace, monospace;
 }
@@ -38,213 +37,416 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── CopilotKit theme overrides ── */
-[data-copilotkit] {
-  --background: #2b221a;
-  --foreground: #f9ca9c;
-  --card: #3c2d21;
-  --card-foreground: #f9ca9c;
-  --popover: #4a392e;
-  --popover-foreground: #f9ca9c;
-  --primary: #f66e60;
-  --primary-foreground: #fff;
-  --secondary: #fcaf41;
-  --secondary-foreground: #2b221a;
-  --muted: #4e3f32;
-  --muted-foreground: #d3b591;
-  --accent: #655144;
-  --accent-foreground: #fff2da;
-  --destructive: #ff6366;
-  --destructive-foreground: #fff;
-  --border: #5a4a3e;
-  --input: #584332;
-  --ring: #f66e60;
-  --radius: 0.75rem;
+:root, .dark, html.dark {
+  --copilot-kit-primary-color: #f66e60;
+  --copilot-kit-contrast-color: #fff;
+  --copilot-kit-background-color: #2b221a;
+  --copilot-kit-input-background-color: #3c2d21;
+  --copilot-kit-secondary-color: #3c2d21;
+  --copilot-kit-secondary-contrast-color: #f9ca9c;
+  --copilot-kit-separator-color: #5a4a3e;
+  --copilot-kit-muted-color: #4e3f32;
+  --copilot-kit-shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.2);
+  --copilot-kit-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.3), 0 2px 4px -1px rgba(0,0,0,0.2);
+  --copilot-kit-shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.3), 0 4px 6px -2px rgba(0,0,0,0.2);
 }
 
-/* Chat container */
 .copilotKitChat {
-  background: var(--card) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius) !important;
+  background: var(--copilot-kit-background-color) !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
   font-family: var(--font-sans) !important;
-  overflow: hidden;
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
 }
 
-/* Header bar */
 .copilotKitChat .copilotKitHeader {
-  background: linear-gradient(135deg, #3c2d21 0%, #4a392e 100%) !important;
-  border-bottom: 1px solid var(--border) !important;
-  padding: 1rem 1.25rem !important;
+  display: none !important;
 }
 
-.copilotKitChat .copilotKitHeader h3,
-.copilotKitChat .copilotKitHeader span,
-.copilotKitChat .copilotKitHeader div {
-  color: var(--foreground) !important;
-  font-family: var(--font-sans) !important;
-  font-weight: 600 !important;
-}
-
-/* Message body area */
 .copilotKitChat .copilotKitChatBody {
-  background: var(--card) !important;
-}
-
-.copilotKitChat .copilotKitMessages {
+  flex: 1 1 0% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
   background: transparent !important;
 }
 
-/* User messages */
-.copilotKitChat .copilotKitUserMessage {
-  background: var(--primary) !important;
-  color: var(--primary-foreground) !important;
-  border-radius: 1.25rem 1.25rem 0.25rem 1.25rem !important;
-  padding: 0.75rem 1rem !important;
-  font-size: 0.9rem !important;
-  line-height: 1.5 !important;
-  box-shadow: 0 2px 8px rgba(246, 110, 96, 0.25) !important;
+.copilotKitChat .copilotKitMessages {
+  flex: 1 !important;
+  overflow-y: auto !important;
+  padding: 1rem 0 !important;
+  background: transparent !important;
 }
 
-/* Assistant messages */
-.copilotKitChat .copilotKitAssistantMessage {
-  background: var(--muted) !important;
-  color: var(--foreground) !important;
-  border-radius: 1.25rem 1.25rem 1.25rem 0.25rem !important;
-  padding: 0.75rem 1rem !important;
-  font-size: 0.9rem !important;
-  line-height: 1.5 !important;
-  border: 1px solid var(--border) !important;
+.copilotKitChat .copilotKitMessagesContainer {
+  max-width: 48rem !important;
+  margin: 0 auto !important;
+  padding: 0 1.5rem !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 1.5rem !important;
 }
 
-/* Markdown inside messages */
+.copilotKitChat .copilotKitMessage {
+  border-radius: 1.25rem !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 0.95rem !important;
+  line-height: 1.7 !important;
+  max-width: 100% !important;
+  margin-bottom: 0 !important;
+}
+
+.copilotKitChat .copilotKitMessage.copilotKitUserMessage {
+  background: #4e3f32 !important;
+  color: #f9ca9c !important;
+  margin-left: auto !important;
+  max-width: 80% !important;
+  border-radius: 1.25rem !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 0.95rem !important;
+  line-height: 1.7 !important;
+}
+
+.copilotKitChat .copilotKitMessage.copilotKitAssistantMessage {
+  background: transparent !important;
+  color: #f9ca9c !important;
+  margin-right: auto !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+
+.copilotKitChat .copilotKitMessage.copilotKitAssistantMessage .copilotKitMessageControls {
+  position: relative !important;
+  left: auto !important;
+  bottom: auto !important;
+  display: flex !important;
+  gap: 0.25rem !important;
+  padding: 0.375rem 0 0 !important;
+  opacity: 0 !important;
+  transition: opacity 0.15s ease !important;
+}
+
+.copilotKitChat .copilotKitMessageControls.currentMessage {
+  opacity: 1 !important;
+}
+
+.copilotKitChat .copilotKitMessage:hover .copilotKitMessageControls {
+  opacity: 1 !important;
+}
+
+.copilotKitChat .copilotKitMessageControlButton {
+  color: #d3b591 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0.375rem !important;
+  padding: 0.25rem !important;
+  cursor: pointer !important;
+  transition: color 0.15s ease, background 0.15s ease !important;
+}
+
+.copilotKitChat .copilotKitMessageControlButton:hover {
+  color: #f66e60 !important;
+  background: rgba(246, 110, 96, 0.1) !important;
+}
+
 .copilotKitChat .copilotKitMarkdown {
   color: inherit !important;
   font-family: var(--font-sans) !important;
 }
 
-.copilotKitChat .copilotKitMarkdown code {
+.copilotKitChat .copilotKitMarkdown p {
+  margin-bottom: 0.75rem !important;
+}
+
+.copilotKitChat .copilotKitMarkdown p:last-child {
+  margin-bottom: 0 !important;
+}
+
+.copilotKitChat .copilotKitMarkdown ul,
+.copilotKitChat .copilotKitMarkdown ol {
+  padding-left: 1.5rem !important;
+  margin-bottom: 0.75rem !important;
+}
+
+.copilotKitChat .copilotKitMarkdown li {
+  margin-bottom: 0.25rem !important;
+}
+
+.copilotKitChat .copilotKitMarkdown a {
+  color: #fcaf41 !important;
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+}
+
+.copilotKitChat .copilotKitMarkdown a:hover {
+  color: #f66e60 !important;
+}
+
+.copilotKitChat .copilotKitInlineCode,
+.copilotKitChat .copilotKitMarkdown code:not(pre code) {
   font-family: var(--font-mono) !important;
-  background: rgba(0, 0, 0, 0.3) !important;
+  background: rgba(0, 0, 0, 0.25) !important;
   padding: 0.15rem 0.4rem !important;
   border-radius: 0.25rem !important;
   font-size: 0.85em !important;
-  color: var(--secondary) !important;
+  color: #fcaf41 !important;
 }
 
-.copilotKitChat .copilotKitMarkdown pre {
+.copilotKitChat .copilotKitCodeBlock {
   background: #1a140e !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 0.5rem !important;
-  padding: 0.75rem 1rem !important;
-  margin: 0.5rem 0 !important;
-  overflow-x: auto;
+  border: 1px solid #5a4a3e !important;
+  border-radius: 0.625rem !important;
+  margin: 0.75rem 0 !important;
+  overflow: hidden !important;
 }
 
-.copilotKitChat .copilotKitMarkdown pre code {
-  background: none !important;
-  padding: 0 !important;
-  color: var(--foreground) !important;
+.copilotKitChat .copilotKitCodeBlockToolbar {
+  background: #2b221a !important;
+  border-bottom: 1px solid #5a4a3e !important;
+  padding: 0.375rem 0.75rem !important;
 }
 
-/* Message controls (regenerate, copy) */
-.copilotKitChat .copilotKitMessageControls {
-  opacity: 0;
-  transition: opacity 0.2s ease !important;
+.copilotKitChat .copilotKitCodeBlockToolbarLanguage {
+  color: #d3b591 !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.75rem !important;
 }
 
-.copilotKitChat .copilotKitMessage:hover .copilotKitMessageControls {
-  opacity: 1;
-}
-
-.copilotKitChat .copilotKitMessageControlButton {
-  color: var(--muted-foreground) !important;
+.copilotKitChat .copilotKitCodeBlockToolbarButton {
+  color: #d3b591 !important;
   transition: color 0.15s ease !important;
 }
 
-.copilotKitChat .copilotKitMessageControlButton:hover {
-  color: var(--primary) !important;
+.copilotKitChat .copilotKitCodeBlockToolbarButton:hover {
+  color: #f66e60 !important;
 }
 
-/* Input area */
-.copilotKitChat .copilotKitInputContainer,
-.copilotKitChat [class*="InputContainer"],
-.copilotKitChat footer {
-  background: linear-gradient(to top, var(--card) 0%, var(--card) 100%) !important;
-  border-top: 1px solid var(--border) !important;
+.copilotKitChat .copilotKitCodeBlock pre {
+  padding: 1rem !important;
+  margin: 0 !important;
+  overflow-x: auto !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+.copilotKitChat .copilotKitCodeBlock pre code {
+  font-family: var(--font-mono) !important;
+  font-size: 0.85rem !important;
+  line-height: 1.6 !important;
+  color: #f9ca9c !important;
+  background: none !important;
+  padding: 0 !important;
+}
+
+.copilotKitChat .copilotKitInputContainer {
+  width: 100% !important;
+  padding: 0.75rem 1.5rem 1.25rem !important;
+  background: var(--copilot-kit-background-color) !important;
+  border-top: none !important;
+  border-radius: 0 !important;
+}
+
+.copilotKitChat .copilotKitInputContainer.poweredByContainer {
+  padding-bottom: 0.5rem !important;
+}
+
+.copilotKitChat .copilotKitInput {
+  max-width: 48rem !important;
+  margin: 0 auto !important;
+  background: #3c2d21 !important;
+  border: 1px solid #5a4a3e !important;
+  border-radius: 1.5rem !important;
   padding: 0.75rem 1rem !important;
-}
-
-.copilotKitChat textarea,
-.copilotKitChat input[type="text"] {
-  background: var(--input) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 0.75rem !important;
-  color: var(--foreground) !important;
-  font-family: var(--font-sans) !important;
-  font-size: 0.9rem !important;
-  padding: 0.625rem 1rem !important;
+  min-height: 56px !important;
   transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
 
-.copilotKitChat textarea:focus,
-.copilotKitChat input[type="text"]:focus {
-  border-color: var(--primary) !important;
-  box-shadow: 0 0 0 2px rgba(246, 110, 96, 0.2) !important;
-  outline: none !important;
+.copilotKitChat .copilotKitInput:focus-within {
+  border-color: #f66e60 !important;
+  box-shadow: 0 0 0 2px rgba(246, 110, 96, 0.15) !important;
 }
 
-.copilotKitChat textarea::placeholder,
-.copilotKitChat input::placeholder {
-  color: var(--muted-foreground) !important;
-}
-
-/* Send button */
-.copilotKitChat button[aria-label*="Send"],
-.copilotKitChat button[type="submit"],
-.copilotKitChat .copilotKitSendButton {
-  background: var(--primary) !important;
-  color: var(--primary-foreground) !important;
-  border-radius: 0.625rem !important;
-  border: none !important;
-  transition: background 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease !important;
-}
-
-.copilotKitChat button[aria-label*="Send"]:hover,
-.copilotKitChat button[type="submit"]:hover,
-.copilotKitChat .copilotKitSendButton:hover {
-  background: #e55a4d !important;
-  box-shadow: 0 2px 10px rgba(246, 110, 96, 0.35) !important;
-  transform: translateY(-1px) !important;
-}
-
-/* Scrollbar */
-.copilotKitChat ::-webkit-scrollbar { width: 6px; }
-.copilotKitChat ::-webkit-scrollbar-track { background: transparent; }
-.copilotKitChat ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-.copilotKitChat ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
-
-/* Suggestions */
-.copilotKitChat [class*="suggestion"],
-.copilotKitChat [class*="Suggestion"] {
-  background: var(--muted) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--foreground) !important;
-  border-radius: 0.625rem !important;
+.copilotKitChat .copilotKitInput textarea {
+  background: transparent !important;
+  color: #f9ca9c !important;
   font-family: var(--font-sans) !important;
-  transition: border-color 0.2s ease, background 0.2s ease !important;
+  font-size: 0.95rem !important;
+  line-height: 1.5 !important;
+  border: none !important;
+  outline: none !important;
+  resize: none !important;
+  padding: 0 !important;
+  min-height: auto !important;
 }
 
-.copilotKitChat [class*="suggestion"]:hover,
-.copilotKitChat [class*="Suggestion"]:hover {
-  border-color: var(--primary) !important;
-  background: var(--accent) !important;
+.copilotKitChat .copilotKitInput textarea::placeholder {
+  color: #d3b591 !important;
+  opacity: 0.6 !important;
 }
 
-/* Activity / thinking indicator */
-.copilotKitChat [class*="activity"],
-.copilotKitChat [class*="Activity"],
-.copilotKitChat [class*="thinking"],
-.copilotKitChat [class*="Thinking"] {
-  color: var(--secondary) !important;
+.copilotKitChat .copilotKitInputControlButton {
+  width: 2rem !important;
+  height: 2rem !important;
+  min-width: 2rem !important;
+  min-height: 2rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #f66e60 !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  transition: background 0.15s ease, transform 0.1s ease, opacity 0.15s ease !important;
+  padding: 0 !important;
+}
+
+.copilotKitChat .copilotKitInputControlButton:hover {
+  background: #e55a4d !important;
+  transform: scale(1.05) !important;
+}
+
+.copilotKitChat .copilotKitInputControlButton:disabled {
+  background: #4e3f32 !important;
+  color: #d3b591 !important;
+  opacity: 0.5 !important;
+  cursor: default !important;
+  transform: none !important;
+}
+
+.copilotKitChat .copilotKitInputControlButton svg {
+  width: 1rem !important;
+  height: 1rem !important;
+}
+
+.poweredBy {
+  background: transparent !important;
+  color: #d3b591 !important;
+  opacity: 0.3 !important;
+  font-size: 11px !important;
+  padding: 0.25rem 0 !important;
+}
+
+.poweredByContainer {
+  padding: 0 !important;
+}
+
+.copilotKitChat .copilotKitActivityDot {
+  background: #fcaf41 !important;
+}
+
+.copilotKitChat .copilotKitSpinner {
+  border-color: #5a4a3e !important;
+  border-top-color: #f66e60 !important;
+}
+
+.copilotKitChat .copilotKitAttachmentQueue {
+  background: #3c2d21 !important;
+  border: 1px solid #5a4a3e !important;
+  border-radius: 0.75rem !important;
+}
+
+.copilotKitChat .copilotKitAttachmentQueueItem {
+  background: #4e3f32 !important;
+  border: 1px solid #5a4a3e !important;
+  border-radius: 0.5rem !important;
+  color: #f9ca9c !important;
+}
+
+.copilotKitChat .copilotKitMessages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.copilotKitChat .copilotKitMessages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.copilotKitChat .copilotKitMessages::-webkit-scrollbar-thumb {
+  background: #5a4a3e;
+  border-radius: 3px;
+}
+
+.copilotKitChat .copilotKitMessages::-webkit-scrollbar-thumb:hover {
+  background: #d3b591;
+}
+
+.copilotKitChat .copilotKitMessagesFooter {
+  height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.copilotKitChat .copilotKitHelpModal {
+  background: #3c2d21 !important;
+  border: 1px solid #5a4a3e !important;
+  border-radius: 0.75rem !important;
+  color: #f9ca9c !important;
+}
+
+.copilotKitChat .copilotKitHelpItemButton {
+  color: #d3b591 !important;
+  background: #4e3f32 !important;
+  border: 1px solid #5a4a3e !important;
+  border-radius: 0.5rem !important;
+  transition: border-color 0.15s ease !important;
+}
+
+.copilotKitChat .copilotKitHelpItemButton:hover {
+  border-color: #f66e60 !important;
+}
+
+@media (max-width: 640px) {
+  .copilotKitChat .copilotKitMessagesContainer {
+    padding: 0 1rem !important;
+  }
+
+  .copilotKitChat .copilotKitInputContainer {
+    padding: 0.5rem 0.75rem 1rem !important;
+  }
+
+  .copilotKitChat .copilotKitInput {
+    padding: 0.625rem 0.75rem !important;
+    min-height: 48px !important;
+  }
+
+  .copilotKitChat .copilotKitMessage.copilotKitUserMessage {
+    max-width: 90% !important;
+  }
+}
+
+.copilotKitChat .copilotKitImageRendering {
+  border-radius: 0.75rem !important;
+  overflow: hidden !important;
+  border: 1px solid #5a4a3e !important;
+}
+
+.copilotKitChat .copilotKitImageRenderingContent {
+  background: #3c2d21 !important;
+}
+
+.copilotKitChat .copilotKitCustomAssistantMessage {
+  background: transparent !important;
+  color: #f9ca9c !important;
+}
+
+.copilotKitChat.copilotKitDragOver {
+  background: rgba(246, 110, 96, 0.05) !important;
+}
+
+.copilotKitChat .copilotKitDebugMenu {
+  background: #3c2d21 !important;
+  border: 1px solid #5a4a3e !important;
+  border-radius: 0.5rem !important;
+}
+
+.copilotKitChat .copilotKitDebugMenuItem {
+  color: #f9ca9c !important;
+}
+
+.copilotKitChat .copilotKitDebugMenuItem:hover {
+  background: #4e3f32 !important;
 }
