@@ -2,30 +2,24 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from agent.state import AgentState
-from agent.nodes import chat_node, tools_node
-
-# Python-side tool names — only these get routed to tools_node
-PYTHON_TOOL_NAMES = {"plan_tasks", "update_plan_task", "search_web", "scrape_website"}
+from agent.nodes import chat_node, tools_node, PYTHON_TOOL_NAMES
 
 
 def _should_continue(state: AgentState):
     """
-    Route to 'tools' only when the last AIMessage contains at least one
-    BACKEND (Python) tool call.  Frontend tool calls (create_syllabus,
-    add_chapter, add_lesson, …) must NOT be routed to tools_node — the
-    AG-UI framework already emitted them to the frontend via streaming
-    and the frontend will execute them.  Sending them to tools_node would
-    cause a ToolNode 'tool not found' error and break the flow.
+    Route to tools only when the last AIMessage contains backend (Python)
+    tool calls. Frontend tool calls are handled by AG-UI automatically via
+    execute hooks on the frontend -- they never reach tools_node.
     """
     last = state["messages"][-1]
     if not (hasattr(last, "tool_calls") and last.tool_calls):
         return END
 
-    backend_calls = [
-        tc for tc in last.tool_calls
-        if tc.get("name") in PYTHON_TOOL_NAMES
-    ]
-    return "tools" if backend_calls else END
+    has_backend = any(
+        tc.get("name") in PYTHON_TOOL_NAMES
+        for tc in last.tool_calls
+    )
+    return "tools" if has_backend else END
 
 
 def build_graph(checkpointer: BaseCheckpointSaver):
