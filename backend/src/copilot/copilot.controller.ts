@@ -3,6 +3,16 @@ import { CopilotRuntime, copilotRuntimeNestEndpoint } from '@copilotkit/runtime'
 import { LangGraphHttpAgent } from '@copilotkit/runtime/langgraph';
 import { Request, Response } from 'express';
 
+/**
+ * Proxies all /copilotkit/* requests to the LangGraph FastAPI agent.
+ *
+ * Agent name 'syllabus_agent' must match:
+ *   - agent/main.py      → LangGraphAGUIAgent(name='syllabus_agent')
+ *   - frontend page.tsx  → <CopilotKit agent='syllabus_agent'>
+ *
+ * Required Railway env var on the BACKEND service:
+ *   AGENT_URL=https://agent-production-43c3.up.railway.app/copilotkit
+ */
 @Controller('copilotkit')
 export class CopilotController {
   private getHandler() {
@@ -11,7 +21,7 @@ export class CopilotController {
 
     const runtime = new CopilotRuntime({
       agents: {
-        default: new LangGraphHttpAgent({ url: agentUrl }),
+        syllabus_agent: new LangGraphHttpAgent({ url: agentUrl }),
       },
     });
 

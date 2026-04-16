@@ -2,7 +2,11 @@
 FastAPI entry point for the LangGraph AG-UI agent.
 
 Exposes the agent via the AG-UI protocol at POST /copilotkit
-so the NestJS CopilotRuntime (HttpAgent) can route messages to it.
+so the NestJS CopilotRuntime (LangGraphHttpAgent) can route messages to it.
+
+Agent name 'syllabus_agent' must match:
+  - backend copilot.controller.ts  → agents: { syllabus_agent: ... }
+  - frontend page.tsx              → <CopilotKit agent='syllabus_agent'>
 
 Run with:
     uvicorn agent.main:app --host 0.0.0.0 --port 8000
@@ -45,7 +49,7 @@ from copilotkit import LangGraphAGUIAgent
 from .graph import graph
 
 app = FastAPI(
-    title="Master PFE \u2014 LangGraph Agent",
+    title="Master PFE \u2014 Syllabus AI Agent",
     description="AG-UI agent powered by LangGraph + NVIDIA NIM",
     version="1.0.0",
 )
@@ -58,22 +62,20 @@ app.add_middleware(
 )
 
 agent = LangGraphAGUIAgent(
-    name="default",
-    description="A general-purpose AI assistant powered by NVIDIA NIM.",
+    name="syllabus_agent",
+    description="Course syllabus builder powered by NVIDIA NIM. Creates structured syllabi with chapters and rich BlockNote lesson content.",
     graph=graph,
 )
 
 add_langgraph_fastapi_endpoint(app, agent, "/copilotkit")
 
-
 @app.get("/health")
 async def health() -> dict:
     return {
         "status": "ok",
-        "agent": "default",
+        "agent": "syllabus_agent",
         "llm": os.getenv("LLM_MODEL", "unknown"),
     }
-
 
 if __name__ == "__main__":
     import uvicorn
