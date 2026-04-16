@@ -12,16 +12,21 @@ Key design decisions
 2.  Safe json.loads patch - belts-and-suspenders guard for the ag_ui library
     bug where tc.function.arguments can be '' (empty string) and the
     library does json.loads(...) without guarding against that.
+
+3.  add_fastapi_endpoint - the correct CopilotKit FastAPI integration.
+    CopilotKitRemoteEndpoint has no .handle_request() method; the SDK
+    registers its own routes via add_fastapi_endpoint(app, sdk, prefix).
 """
 
 import json as _json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from copilotkit import CopilotKitRemoteEndpoint
 from copilotkit.langgraph_agui_agent import LangGraphAGUIAgent
+from copilotkit.integrations.fastapi import add_fastapi_endpoint
 
 from agent.checkpointer import get_checkpointer, close_checkpointer
 from agent.graph import build_graph
@@ -29,8 +34,8 @@ from agent.graph import build_graph
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Monkey-patch: fix ag_ui bug where empty tool-call arguments crash json.loads
-# ag_ui_langgraph/utils.py does:
+# ── Monkey-patch ──────────────────────────────────────────────────────────────
+# ag_ui_langgraph/utils.py line 259 does:
 #   json.loads(tc.function.arguments) if ... and tc.function.arguments else {}
 # The guard is `if tc.function.arguments` which is False for None/empty string
 # but True for a whitespace-only string like " ".  We patch json.loads so that
@@ -47,11 +52,23 @@ def _safe_json_loads(s, *args, **kwargs):
 
 
 _json.loads = _safe_json_loads
+# ── end patch ─────────────────────────────────────────────────────────────────
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Start-up: init DB pool + compile graph.  Shut-down: close pool."""
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def startup():
+    """Init DB pool, compile graph, register CopilotKit routes."""
     checkpointer = await get_checkpointer()
     graph = build_graph(checkpointer)
 
@@ -68,28 +85,17 @@ async def lifespan(app: FastAPI):
             )
         ]
     )
-    app.state.sdk = sdk
-    logger.info("Agent ready.")
-    yield
+
+    # Registers /copilotkit/, /copilotkit/agent/{name}, etc.
+    add_fastapi_endpoint(app, sdk, "/copilotkit")
+    logger.info("Agent ready — CopilotKit endpoint registered at /copilotkit")
+
+
+@app.on_event("shutdown")
+async def shutdown():
     await close_checkpointer()
-
-
-app = FastAPI(lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.post("/copilotkit")
-async def copilotkit_endpoint(request: Request):
-    return await app.state.sdk.handle_request(request)
