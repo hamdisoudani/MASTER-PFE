@@ -1,14 +1,19 @@
+# nodes.py — see module docstring below
 """
 chat_node  -- main LLM node.
   - Binds Python tools + CopilotKit frontend tools to the LLM.
-  - AG-UI handles frontend tool execution automatically (execute hooks on the
-    frontend side); the agent does NOT need to intercept, stash, or inject
-    synthetic ToolMessages for frontend calls.
   - Summarization middleware compresses old messages when history > MAX_MESSAGES.
   - Extracts ToolMessage results and persists them into named state fields
     so the frontend can render plan / search / scrape live.
 
-tools_node -- ToolNode that executes Python-side tools only.
+tools_node -- smart tool executor.
+  - Runs Python (server-side) tool calls via LangGraph ToolNode.
+  - For frontend (browser-side) tool calls, injects a ToolMessage using the
+    ag-ui orphan format:  "Tool call '<name>' with id '<id>' was interrupted
+    before completion."  ag-ui detects this pattern on the next request and
+    replaces it with the real result returned by the frontend execute callback.
+  - This is the correct CopilotKit/ag-ui pattern — no synthetic "acknowledged"
+    placeholders that confuse the LLM and no separate pre_tools node.
 """
 import json
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
@@ -19,7 +24,7 @@ from .state import AgentState
 from .llm import get_llm
 from .tools import PYTHON_TOOLS
 
-tools_node = ToolNode(PYTHON_TOOLS)
+_python_tool_node = ToolNode(PYTHON_TOOLS)
 PYTHON_TOOL_NAMES = {t.name for t in PYTHON_TOOLS}
 
 
@@ -86,143 +91,99 @@ You have two categories of tools:
   * COURSE-BUILDING tools (frontend, browser-side): create_syllabus, add_chapter, add_lesson,
     update_lesson_content, remove_chapter, remove_lesson
 
-Both sets are REAL callable tools. Call them as tool/function calls -- never describe their output in plain text.
-
-CRITICAL RULES
-==============
-
-RULE 1 -- ALWAYS USE TOOL CALLS, NEVER PLAIN TEXT
-  Do NOT write syllabus / chapter / lesson content in your response text.
-  ALWAYS call the tool: create_syllabus(), add_chapter(), add_lesson().
-  After research -> call add_lesson() immediately. Do not describe the content.
-
-RULE 2 -- ONE COURSE-BUILDING TOOL CALL PER RESPONSE
-  Call exactly one frontend tool per response (add_chapter OR add_lesson, not both).
-  You can combine one backend tool (update_plan_task) with one frontend tool if needed.
-
-RULE 3 -- COMPLETE ALL PLANNED STEPS
-  Execute every step you planned. Never pause mid-plan to ask for permission.
-  After every step call update_plan_task(id, "done") then move to the next step.
-
-WORKFLOW
-========
-
-1. PLAN
-   plan_tasks(tasks: list[str]) -> List every step before starting. Call this once.
-   update_plan_task(task_id: int, status: "pending"|"in_progress"|"done")
-     -> Before each step: in_progress. After each step: done.
-
-2. RESEARCH (one search per lesson topic is enough)
-   search_web(query, country="us", num_results=6)
-   scrape_website(url: str)
-
-3. BUILD (frontend tools -- executed by the browser via AG-UI execute hooks)
-   create_syllabus(id, title, subject, description?)   -> id = url slug, call once
-   add_chapter(syllabusId, chapterId, title, description?)
-   add_lesson(chapterId, lessonId, title, content)     -> content = BlockNote JSON array
-   update_lesson_content(lessonId, content)
-   remove_chapter(chapterId) / remove_lesson(lessonId)
-
-BLOCKNOTE JSON -- content format for add_lesson (minimum 6 blocks)
-==================================================================
-
-[
-  { "id": "<lessonId>-h1", "type": "heading",
-    "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left", "level": 1 },
-    "content": [{ "type": "text", "text": "Lesson Title", "styles": {} }], "children": [] },
-  { "id": "<lessonId>-p1", "type": "paragraph",
-    "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left" },
-    "content": [{ "type": "text", "text": "Engaging intro.", "styles": {} }], "children": [] },
-  { "id": "<lessonId>-h2", "type": "heading",
-    "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left", "level": 2 },
-    "content": [{ "type": "text", "text": "Section Title", "styles": {} }], "children": [] },
-  { "id": "<lessonId>-b1", "type": "bulletListItem",
-    "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left" },
-    "content": [{ "type": "text", "text": "Key point.", "styles": {} }], "children": [] },
-  { "id": "<lessonId>-b2", "type": "bulletListItem",
-    "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left" },
-    "content": [{ "type": "text", "text": "Another point.", "styles": {} }], "children": [] },
-  { "id": "<lessonId>-p2", "type": "paragraph",
-    "props": { "textColor": "default", "backgroundColor": "default", "textAlignment": "left" },
-    "content": [{ "type": "text", "text": "Summary / bridge to next lesson.", "styles": {} }], "children": [] }
-]
-
-STRICT: content is always an array, children is always [], ids are unique and prefixed with lessonId,
-heading needs level in props, codeBlock needs language in props.
-
-EXAMPLE
-=======
-
-User: "build a Python basics course"
-Turn 1:  plan_tasks(["Research","create_syllabus","add_chapter ch1","add_lesson l1-1","add_lesson l1-2"])
-Turn 2:  update_plan_task(0,"in_progress") + search_web("Python basics variables")
-Turn 3:  update_plan_task(0,"done") + update_plan_task(1,"in_progress") + create_syllabus("python-basics","Python Basics","Programming")
-Turn 4:  update_plan_task(1,"done") + update_plan_task(2,"in_progress") + add_chapter("python-basics","ch1","Getting Started")
-Turn 5:  update_plan_task(2,"done") + update_plan_task(3,"in_progress") + add_lesson("ch1","l1-1","Variables",[<BlockNote JSON>])
-Turn 6:  update_plan_task(3,"done") + update_plan_task(4,"in_progress") + add_lesson("ch1","l1-2","Loops",[<BlockNote JSON>])
-Turn 7:  update_plan_task(4,"done") -- "Course complete!"
+WORKFLOW RULES -- follow these exactly:
+1. Always start by calling plan_tasks to break the user request into clear sub-tasks.
+2. For each sub-task that needs content, use search_web / scrape_website to gather material.
+3. Call create_syllabus ONCE before adding any chapters or lessons.
+4. Add chapters and lessons in order with add_chapter / add_lesson.
+5. After completing all tasks, stop and summarise what was built for the user.
+6. NEVER call the same tool twice with identical arguments in the same conversation turn.
+7. NEVER call a frontend tool (create_syllabus, add_chapter, add_lesson, etc.) unless
+   research for that section is already done.
+8. If a tool result says the action was "interrupted before completion", that means it was
+   sent to the frontend for execution -- do NOT retry it; continue with the next task.
 """
 
 
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
-    """
-    Main LLM node. Binds all tools (Python + frontend) to the LLM and invokes it.
-    AG-UI handles frontend tool execution via execute hooks -- no manual interception needed.
-    """
+    """Main LLM node -- builds prompt, calls LLM, updates state from tool results."""
+    llm = get_llm()
+
+    # Build tool list: Python tools + frontend tool schemas from copilotkit state
     ck = state.get("copilotkit") or {}
-    ck_dict = ck if isinstance(ck, dict) else {}
+    frontend_tools_raw = (
+        ck.get("actions") or []
+        if isinstance(ck, dict)
+        else getattr(ck, "actions", None) or []
+    )
+    bound_llm = llm.bind_tools([*PYTHON_TOOLS, *frontend_tools_raw])
 
-    raw_messages     = list(state["messages"])
-    frontend_actions = ck_dict.get("actions") or []
+    messages = await _maybe_summarize(list(state["messages"]), llm)
 
-    llm            = get_llm()
-    all_tools      = list(PYTHON_TOOLS) + list(frontend_actions)
-    llm_with_tools = llm.bind_tools(all_tools) if all_tools else llm
+    system = SystemMessage(content=SYSTEM_PROMPT)
+    response = await bound_llm.ainvoke([system, *messages], config)
 
-    summarized = await _maybe_summarize(raw_messages, llm)
-    messages   = [SystemMessage(content=SYSTEM_PROMPT)] + summarized
+    # Extract tool results from previous ToolMessages and update state fields
+    updates: dict = {"messages": [response]}
 
-    response = await llm_with_tools.ainvoke(messages, config=config)
-
-    state_updates: dict = {"messages": [response]}
-
-    current_plan: list = list(state.get("plan") or [])
-
-    for msg in raw_messages:
+    for msg in state["messages"]:
         if not isinstance(msg, ToolMessage):
             continue
-        try:
-            data = json.loads(msg.content)
-        except Exception:
-            continue
+        name = getattr(msg, "name", None) or ""
+        content = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
 
-        tool_name = getattr(msg, "name", None)
+        if name == "plan_tasks":
+            try:
+                updates["plan"] = json.loads(content)
+            except Exception:
+                pass
+        elif name == "search_web":
+            updates["search_results"] = content
+        elif name == "scrape_website":
+            updates["scraped_content"] = content
 
-        if tool_name == "plan_tasks" and isinstance(data, dict):
-            tasks = data.get("tasks") or []
-            current_plan = [
-                {"id": i, "task": t, "status": "pending"}
-                for i, t in enumerate(tasks)
-            ]
-            state_updates["plan"] = current_plan
+    return updates
 
-        elif tool_name == "update_plan_task" and isinstance(data, dict):
-            task_id = data.get("task_id")
-            status  = data.get("status")
-            if task_id is not None and status:
-                current_plan = [
-                    {**t, "status": status} if t["id"] == task_id else t
-                    for t in current_plan
-                ]
-                state_updates["plan"] = current_plan
 
-        elif tool_name == "search_web":
-            results = data.get("results") or (data if isinstance(data, list) else [])
-            state_updates["search_results"] = results
+async def tools_node(state: AgentState) -> dict:
+    """
+    Execute server-side (Python) tools and handle frontend tool calls correctly.
 
-        elif tool_name == "scrape_website":
-            state_updates["scraped_content"] = (
-                data.get("content") or data.get("markdown") or str(data)[:4000]
+    For frontend tool calls we inject a ToolMessage using ag-ui's orphan format:
+        "Tool call '<name>' with id '<id>' was interrupted before completion."
+    ag-ui detects this exact pattern on the NEXT request and replaces it with
+    the actual result returned by the frontend execute callback -- giving the
+    LLM the real tool output on the following turn without any confusion.
+    """
+    last = state["messages"][-1]
+    if not (hasattr(last, "tool_calls") and last.tool_calls):
+        return {}
+
+    backend_calls  = [tc for tc in last.tool_calls if tc.get("name") in PYTHON_TOOL_NAMES]
+    frontend_calls = [tc for tc in last.tool_calls if tc.get("name") not in PYTHON_TOOL_NAMES]
+
+    result_messages: list = []
+
+    # Run Python tools -- filter the AIMessage to only backend calls so ToolNode
+    # does not attempt (and fail) to execute frontend tool calls.
+    if backend_calls:
+        filtered_last  = last.model_copy(update={"tool_calls": backend_calls})
+        filtered_state = {**state, "messages": [*state["messages"][:-1], filtered_last]}
+        tool_result    = await _python_tool_node.ainvoke(filtered_state)
+        result_messages.extend(tool_result.get("messages", []))
+
+    # Inject ag-ui orphan ToolMessages for frontend calls.
+    # ag-ui will replace these placeholders with the real execute-callback results
+    # when the frontend sends back ToolCallResult events on the next request.
+    for tc in frontend_calls:
+        tc_name = tc.get("name", "unknown")
+        tc_id   = tc.get("id", "")
+        result_messages.append(
+            ToolMessage(
+                content=f"Tool call '{tc_name}' with id '{tc_id}' was interrupted before completion.",
+                tool_call_id=tc_id,
+                name=tc_name,
             )
+        )
 
-    return state_updates
+    return {"messages": result_messages} if result_messages else {}
