@@ -4,8 +4,8 @@ WORKDIR /app
 ARG NEXT_PUBLIC_COPILOT_URL
 ENV NEXT_PUBLIC_COPILOT_URL=$NEXT_PUBLIC_COPILOT_URL
 
-COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+COPY package.json ./
+RUN npm install --legacy-peer-deps
 COPY . .
 RUN mkdir -p public
 RUN npm run build
