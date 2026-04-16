@@ -5,8 +5,7 @@ import { Request, Response } from 'express';
 
 @Controller('copilotkit')
 export class CopilotController {
-  @All('*path')
-  async copilotEndpoint(@Req() req: Request, @Res() res: Response) {
+  private getHandler() {
     const agentUrl =
       process.env.AGENT_URL ?? 'http://localhost:8000/copilotkit';
 
@@ -16,11 +15,21 @@ export class CopilotController {
       },
     });
 
-    const handler = copilotRuntimeNestEndpoint({
+    return copilotRuntimeNestEndpoint({
       runtime,
       endpoint: '/copilotkit',
     });
+  }
 
+  @All()
+  async copilotBase(@Req() req: Request, @Res() res: Response) {
+    const handler = this.getHandler();
+    return handler(req, res);
+  }
+
+  @All('*path')
+  async copilotWildcard(@Req() req: Request, @Res() res: Response) {
+    const handler = this.getHandler();
     return handler(req, res);
   }
 }
