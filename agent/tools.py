@@ -1,5 +1,5 @@
 """
-Python-side agent tools: plan_tasks, search_web, scrape_website
+Python-side agent tools: plan_tasks, update_plan_task, search_web, scrape_website
 These are bound to the LLM in nodes.py alongside the frontend (CopilotKit) tools.
 """
 import os
@@ -23,16 +23,42 @@ def plan_tasks(tasks: list) -> str:
     """
     Create a step-by-step plan before building a syllabus.
     ALWAYS call this first for any request involving 2+ chapters.
-    tasks: list of concrete steps, e.g.:
+
+    tasks: list of concrete step strings, e.g.:
       ["Search for Python basics vocabulary",
-       "Create syllabus",
-       "Add chapter: Introduction",
-       "Add lesson: What is Python",
+       "Create syllabus: python-beginners",
+       "Add chapter: ch1-introduction",
+       "Add lesson: l1-1-what-is-python",
        ...]
-    Returns the plan as a JSON array so the frontend can render it.
+
+    After calling plan_tasks, immediately start executing each step:
+    - Call update_plan_task(task_id=N, status='in_progress') BEFORE starting step N
+    - Call update_plan_task(task_id=N, status='done') AFTER completing step N
+
+    This powers the live progress checklist shown to the user.
+    Returns the plan as a JSON array.
     """
     plan = [{"id": i, "task": t, "status": "pending"} for i, t in enumerate(tasks)]
     return json.dumps(plan)
+
+
+@tool
+def update_plan_task(task_id: int, status: str) -> str:
+    """
+    Update the status of a task in the current plan.
+
+    ALWAYS call this to keep the user informed:
+    - update_plan_task(task_id=N, status='in_progress')  ← BEFORE starting step N
+    - update_plan_task(task_id=N, status='done')          ← AFTER completing step N
+
+    task_id: the integer id field from the plan_tasks output (0-indexed)
+    status: 'pending' | 'in_progress' | 'done'
+
+    This updates the live todo checklist visible to the user in real time.
+    """
+    if status not in ("pending", "in_progress", "done"):
+        return json.dumps({"error": f"Invalid status '{status}'. Use: pending | in_progress | done"})
+    return json.dumps({"task_id": task_id, "status": status, "ok": True})
 
 
 @tool
@@ -123,4 +149,4 @@ def scrape_website(url: str) -> str:
         return json.dumps({"error": str(exc), "url": url, "content": ""})
 
 
-PYTHON_TOOLS = [plan_tasks, search_web, scrape_website]
+PYTHON_TOOLS = [plan_tasks, update_plan_task, search_web, scrape_website]

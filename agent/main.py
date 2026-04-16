@@ -6,7 +6,7 @@ so the NestJS CopilotRuntime (LangGraphHttpAgent) can route messages to it.
 
 Agent name 'syllabus_agent' must match:
   - backend copilot.controller.ts  → agents: { syllabus_agent: ... }
-  - frontend page.tsx              → <CopilotKit agent='syllabus_agent'>
+  - frontend layout.tsx            → <CopilotKit agent='syllabus_agent'>
 
 Run with:
     uvicorn agent.main:app --host 0.0.0.0 --port 8000
@@ -49,7 +49,7 @@ from copilotkit import LangGraphAGUIAgent
 from .graph import graph
 
 app = FastAPI(
-    title="Master PFE \u2014 Syllabus AI Agent",
+    title="Master PFE — Syllabus AI Agent",
     description="AG-UI agent powered by LangGraph + NVIDIA NIM",
     version="1.0.0",
 )
@@ -65,6 +65,9 @@ agent = LangGraphAGUIAgent(
     name="syllabus_agent",
     description="Course syllabus builder powered by NVIDIA NIM. Creates structured syllabi with chapters and rich BlockNote lesson content.",
     graph=graph,
+    # Belt-and-suspenders: also set recursion_limit here in case the library
+    # merges this config into the graph run config.
+    config={"recursion_limit": 150},
 )
 
 add_langgraph_fastapi_endpoint(app, agent, "/copilotkit")
