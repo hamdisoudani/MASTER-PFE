@@ -4,6 +4,11 @@ chat_node -- binds Python tools + CopilotKit frontend tools to the LLM.
 AG-UI / CopilotKit automatically handles frontend tool dispatch via execute
 callbacks on the client side. We only need to route Python (server-side)
 tools through the LangGraph tools node. No special interception needed.
+
+IMPORTANT: parallel_tool_calls=False is required when mixing frontend and
+Python tools. Without it the LLM may emit both types in one AIMessage;
+ToolNode only executes Python calls, leaving frontend calls without a
+ToolMessage result and causing the LLM to loop.
 """
 import json
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
@@ -17,7 +22,6 @@ PYTHON_TOOL_NAMES = {t.name for t in PYTHON_TOOLS}
 
 MAX_MESSAGES = 30
 KEEP_RECENT  = 14
-
 
 async def _maybe_summarize(messages: list, llm) -> list:
     if len(messages) <= MAX_MESSAGES:
@@ -50,7 +54,6 @@ async def _maybe_summarize(messages: list, llm) -> list:
 
     compressed = SystemMessage(content=f"[Prior conversation -- compressed]\n{summary}")
     return [compressed] + list(recent)
-
 
 SYSTEM_PROMPT = """You are Syllabus AI — an expert course-creation assistant for educators.
 
@@ -150,7 +153,6 @@ If renderErrors is non-empty → call update_lesson_content immediately.
 After all tool calls → confirm in natural language what was built.
 """
 
-
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
     """Main LLM node -- builds prompt, calls LLM, updates state from tool results."""
     llm = get_llm()
@@ -161,7 +163,15 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
         if isinstance(ck, dict)
         else getattr(ck, "actions", None) or []
     )
-    bound_llm = llm.bind_tools([*PYTHON_TOOLS, *frontend_tools_raw])
+
+    # parallel_tool_calls=False is CRITICAL when mixing frontend (AG-UI) and
+    # Python tools. Without it the LLM may emit both in one AIMessage; ToolNode
+    # only runs Python calls and the frontend calls are left without a
+    # ToolMessage result, causing the LLM to loop until recursion limit.
+    bound_llm = llm.bind_tools(
+        [*PYTHON_TOOLS, *frontend_tools_raw],
+        parallel_tool_calls=False,
+    )
 
     messages = await _maybe_summarize(list(state["messages"]), llm)
     system = SystemMessage(content=SYSTEM_PROMPT)
