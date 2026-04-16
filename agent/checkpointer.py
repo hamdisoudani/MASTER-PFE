@@ -15,6 +15,19 @@ _pool: AsyncConnectionPool | None = None
 _saver: AsyncPostgresSaver | None = None
 
 
+async def _configure_conn(conn) -> None:
+    """
+    Called for every new connection in the pool.
+
+    Supabase exposes PgBouncer on port 6543 in *transaction* mode.
+    PgBouncer transaction mode does NOT support server-side prepared
+    statements.  In psycopg3, `prepare_threshold = None` fully disables
+    automatic statement preparation so we never get:
+        DuplicatePreparedStatement: prepared statement "_pg3_0" already exists
+    """
+    conn.prepare_threshold = None  # type: ignore[assignment]
+
+
 async def get_checkpointer() -> AsyncPostgresSaver:
     """Initialize once and return the shared AsyncPostgresSaver."""
     global _pool, _saver
@@ -24,11 +37,16 @@ async def get_checkpointer() -> AsyncPostgresSaver:
     logger.info("Initialising Postgres checkpoint pool ...")
     _pool = AsyncConnectionPool(
         conninfo=DATABASE_URL,
-        max_size=20,
-        # autocommit + prepare_threshold=0 are required by AsyncPostgresSaver
-        kwargs={"autocommit": True, "prepare_threshold": 0},
+        min_size=1,
+        max_size=10,
+        # open=False prevents the deprecated auto-open inside __init__;
+        # we call pool.open() explicitly right after.
+        open=False,
+        # autocommit=True is required by AsyncPostgresSaver
+        kwargs={"autocommit": True},
+        configure=_configure_conn,
     )
-    await _pool.open()
+    await _pool.open(wait=True)
     _saver = AsyncPostgresSaver(_pool)
     # Creates the checkpoint tables the first time (idempotent)
     await _saver.setup()
