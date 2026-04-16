@@ -1,6 +1,6 @@
 "use client";
 
-import { useCopilotAction } from "@copilotkit/react-core";
+import { useCopilotAction, useCopilotReadable } from "@copilotkit/react-core";
 import { useSyllabusStore, Block } from "@/store/syllabusStore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -150,6 +150,8 @@ function ErrorRender({ status, args }: { status: string; args: Record<string, st
 
 export function CopilotTools() {
   const {
+    syllabi,
+    renderErrors,
     createSyllabus,
     addChapter,
     addLesson,
@@ -158,6 +160,38 @@ export function CopilotTools() {
     removeLesson,
     setRenderError,
   } = useSyllabusStore();
+
+  // ── Inject current editor state as agent context ───────────────────────────
+  // The agent reads this to avoid recreating existing syllabuses/chapters and
+  // to use the correct IDs when the user refers to existing content.
+  useCopilotReadable({
+    description:
+      "Courses currently open in the editor. Each entry lists the syllabus id, " +
+      "title, subject, and its chapters with their lessons. " +
+      "Do NOT create a syllabus or chapter whose id already appears here.",
+    value: syllabi.map((s) => ({
+      id: s.id,
+      title: s.title,
+      subject: s.subject,
+      chapters: s.chapters.map((ch) => ({
+        id: ch.id,
+        title: ch.title,
+        lessons: ch.lessons.map((l) => ({ id: l.id, title: l.title })),
+      })),
+    })),
+  });
+
+  // ── Inject render errors so agent can proactively fix them ─────────────────
+  useCopilotReadable({
+    description:
+      "Lessons that currently have BlockNote render errors. " +
+      "Call update_lesson_content for each listed lessonId to fix them.",
+    value: Object.entries(renderErrors)
+      .filter(([, err]) => err !== null)
+      .map(([lessonId, error]) => ({ lessonId, error })),
+  });
+
+  // ── Frontend tools (dispatched by CopilotKit / AG-UI) ──────────────────────
 
   useCopilotAction({
     name: "create_syllabus",

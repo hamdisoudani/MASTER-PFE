@@ -61,6 +61,15 @@ Your job: build complete, beautifully structured course syllabi with rich, accur
 You have both RESEARCH tools (Python-side) and COURSE-BUILDING tools (frontend-side).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXT — WHAT ALREADY EXISTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The user's current syllabuses, chapters, and lessons are injected into
+your context automatically. ALWAYS read this context before creating
+anything — never create a syllabus or chapter that already exists.
+Use the exact IDs shown in the context when referencing existing content.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 1 — ALWAYS PLAN FIRST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -75,6 +84,11 @@ plan_tasks(tasks: list[str])
      "add_lesson: l1-2-installation",
      "add_chapter: ch2-basics",
      ...]
+
+update_plan_task(task_id, status)
+  → Call update_plan_task(N, 'in_progress') BEFORE starting step N.
+  → Call update_plan_task(N, 'done') AFTER completing step N.
+  → This drives the live progress checklist the user sees.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 2 — RESEARCH (before writing any lesson)
@@ -146,12 +160,47 @@ STRICT RULES:
   6. No extra keys beyond id, type, props, content, children
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ERROR HANDLING
+RESPONSE STYLE — CRITICAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If renderErrors is non-empty → call update_lesson_content immediately.
-After all tool calls → confirm in natural language what was built.
+After completing work, reply in 1-3 short, friendly sentences.
+  ✓ "Done! I created the A1 syllabus with Chapter 1 and 4 lessons. Want me to continue with Chapter 2?"
+  ✗ NEVER write formal reports, headers like "Summary:", bullet breakdowns of work, or word counts like "(98 words)".
+  ✗ NEVER say "Research Done:", "Still Needs to Be Done:", "Syllabus Created:", etc.
+  ✗ NEVER append "(N words)" or any word-count notation to your replies.
+
+If renderErrors is non-empty → call update_lesson_content immediately, then tell the user in one sentence.
 """
+
+
+def _apply_plan_updates(messages: list) -> list | None:
+    """Reconstruct the latest plan state by replaying all plan_tasks and
+    update_plan_task ToolMessages from history in order."""
+    current_plan: list | None = None
+    for msg in messages:
+        if not isinstance(msg, ToolMessage):
+            continue
+        name = getattr(msg, "name", None) or ""
+        raw = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+        if name == "plan_tasks":
+            try:
+                current_plan = json.loads(raw)
+            except Exception:
+                pass
+        elif name == "update_plan_task" and current_plan is not None:
+            try:
+                result = json.loads(raw)
+                task_id = result.get("task_id")
+                new_status = result.get("status")
+                if task_id is not None and new_status:
+                    current_plan = [
+                        {**t, "status": new_status} if t["id"] == task_id else t
+                        for t in current_plan
+                    ]
+            except Exception:
+                pass
+    return current_plan
+
 
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
     """Main LLM node -- builds prompt, calls LLM, updates state from tool results."""
@@ -179,20 +228,32 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict:
 
     updates: dict = {"messages": [response]}
 
-    for msg in state["messages"]:
+    # Reconstruct plan state from full ToolMessage history (plan_tasks sets
+    # the initial list; update_plan_task patches individual task statuses)
+    rebuilt_plan = _apply_plan_updates(state["messages"])
+    if rebuilt_plan is not None:
+        updates["plan"] = rebuilt_plan
+
+    # Update remaining state fields from the most recent matching ToolMessage
+    for msg in reversed(state["messages"]):
         if not isinstance(msg, ToolMessage):
             continue
         name = getattr(msg, "name", None) or ""
-        content = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+        raw = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
 
-        if name == "plan_tasks":
+        if name == "search_web" and "search_results" not in updates:
             try:
-                updates["plan"] = json.loads(content)
+                updates["search_results"] = json.loads(raw)
             except Exception:
                 pass
-        elif name == "search_web":
-            updates["search_results"] = content
-        elif name == "scrape_website":
-            updates["scraped_content"] = content
+
+        elif name == "scrape_website" and "scraped_content" not in updates:
+            try:
+                updates["scraped_content"] = json.loads(raw)
+            except Exception:
+                pass
+
+        if "search_results" in updates and "scraped_content" in updates:
+            break
 
     return updates
