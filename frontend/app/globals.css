@@ -1,1 +1,136 @@
-/* globals.css - appended BlockNote 0.48 dark theme section */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #1a140e;
+  --foreground: #f5ede3;
+  --card: #231a12;
+  --card-foreground: #f5ede3;
+  --popover: #231a12;
+  --popover-foreground: #f5ede3;
+  --primary: #f66e60;
+  --primary-foreground: #1a140e;
+  --secondary: #fcaf41;
+  --secondary-foreground: #1a140e;
+  --muted: #2e2218;
+  --muted-foreground: #a08060;
+  --accent: #2e2218;
+  --accent-foreground: #f5ede3;
+  --destructive: #e05050;
+  --destructive-foreground: #f5ede3;
+  --border: #3a2a1a;
+  --input: #2e2218;
+  --ring: #f66e60;
+  --radius: 0.5rem;
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+* {
+  border-color: var(--border);
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* ─── BlockNote 0.48 dark-theme overrides ──────────────────────────────────── */
+/* Theme props → .bn-root  |  Layout props → .bn-container                      */
+
+.bn-root {
+  --bn-colors-editor-background: #1a140e;
+  --bn-colors-editor-text: var(--foreground);
+  --bn-colors-menu-background: var(--card);
+  --bn-colors-menu-text: var(--foreground);
+  --bn-colors-hovered-background: var(--accent);
+  --bn-colors-hovered-text: var(--foreground);
+  --bn-colors-selected-background: var(--primary);
+  --bn-colors-selected-text: var(--primary-foreground);
+  --bn-colors-disabled-background: transparent;
+  --bn-colors-disabled-text: var(--muted-foreground);
+  --bn-colors-shadow: rgba(0, 0, 0, 0.5);
+  --bn-colors-border: var(--border);
+  --bn-colors-side-menu: var(--muted-foreground);
+  --bn-font-family: var(--font-sans);
+  font-family: var(--font-sans);
+}
+
+.bn-container {
+  height: 100% !important;
+  background: #1a140e !important;
+}
+
+.bn-editor {
+  background: #1a140e !important;
+  padding: 2rem 3rem !important;
+  max-width: 820px !important;
+  margin: 0 auto !important;
+  min-height: 100% !important;
+  font-size: 0.9375rem !important;
+  line-height: 1.75 !important;
+}
+
+/* Headings */
+.bn-editor [data-content-type='heading'][data-level='1'] {
+  font-size: 1.6rem !important;
+  font-weight: 700 !important;
+  padding-bottom: 0.4rem !important;
+  border-bottom: 1px solid var(--border) !important;
+  margin-bottom: 0.8rem !important;
+}
+.bn-editor [data-content-type='heading'][data-level='2'] {
+  font-size: 1.2rem !important;
+  font-weight: 600 !important;
+  color: var(--secondary) !important;
+}
+.bn-editor [data-content-type='heading'][data-level='3'] {
+  font-size: 1.05rem !important;
+  font-weight: 600 !important;
+  color: var(--muted-foreground) !important;
+}
+
+/* Code blocks */
+.bn-editor [data-content-type='codeBlock'] {
+  background: rgba(0, 0, 0, 0.4) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 0.5rem !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.85rem !important;
+  color: #fcaf41 !important;
+}
+
+/* Blockquote */
+.bn-editor [data-content-type='quote'] {
+  border-left: 3px solid var(--primary) !important;
+  background: rgba(246, 110, 96, 0.05) !important;
+  padding-left: 1rem !important;
+  color: var(--muted-foreground) !important;
+}
+
+/* Suggestion menu & formatting toolbar */
+.bn-suggestion-menu,
+.bn-formatting-toolbar {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+}
