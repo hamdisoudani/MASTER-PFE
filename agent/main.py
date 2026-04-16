@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ag_ui_langgraph.endpoint import add_langgraph_fastapi_endpoint
 from copilotkit import LangGraphAGUIAgent
+from copilotkit.langgraph import copilotkit_customize_config
 
 from agent.checkpointer import get_checkpointer, close_checkpointer
 from agent.graph import build_graph
@@ -38,20 +39,38 @@ def _safe_json_loads(s, *args, **kwargs):
 _json.loads = _safe_json_loads
 # ---------------------------------------------------------------------------
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- startup ---
     checkpointer = await get_checkpointer()
     graph = build_graph(checkpointer)
 
+    # Build CopilotKit / AG-UI config.
+    # copilotkit_customize_config tells CopilotKit which tool calls to stream to
+    # the frontend as visible events. emit_messages=True streams AI text tokens.
+    # We then set recursion_limit directly on the dict — this is the pattern from
+    # official CopilotKit deep-agents examples and is the ONLY way to have the
+    # AG-UI layer respect a non-default recursion limit.
+    agui_config = copilotkit_customize_config(
+        emit_tool_calls=[
+            "plan_tasks",
+            "update_plan_task",
+            "search_web",
+            "scrape_website",
+        ],
+        emit_messages=True,
+    )
+    # A full course: plan(1) + N*(research+build) turns — 150 is a safe ceiling.
+    agui_config["recursion_limit"] = 150
+
     agent = LangGraphAGUIAgent(
         name="default",
         description="A general-purpose AI assistant powered by NVIDIA NIM.",
         graph=graph,
+        config=agui_config,
     )
 
-    # Register the AG-UI endpoint — same pattern as the original working code
+    # Register the AG-UI endpoint
     add_langgraph_fastapi_endpoint(app, agent, "/copilotkit")
     logger.info("Agent ready.")
 
@@ -59,7 +78,6 @@ async def lifespan(app: FastAPI):
 
     # --- shutdown ---
     await close_checkpointer()
-
 
 app = FastAPI(
     title="Master PFE — LangGraph Agent",
@@ -75,7 +93,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.get("/health")
 async def health() -> dict:
     return {
@@ -83,7 +100,6 @@ async def health() -> dict:
         "agent": "default",
         "llm": os.getenv("LLM_MODEL", "unknown"),
     }
-
 
 if __name__ == "__main__":
     import uvicorn
