@@ -4,7 +4,7 @@ import os
 from typing import Any
 import httpx
 
-SERPER_API_KEY = os.getenv("SERPERE_API_KEY", "")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 SERPER_SEARCH_URL = "https://google.serper.dev/search"
 JINA_BASE = "https://r.jina.ai/"
 
@@ -82,7 +82,7 @@ async def scrape_selected(search_data: list[dict]) -> list[dict]:
         for url in sq.get("selected_urls", []):
             if url not in seen:
                 urls_to_scrape.append(url)
-                seen.ad(url)
+                seen.add(url)
 
     if not urls_to_scrape:
         return []
