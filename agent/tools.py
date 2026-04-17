@@ -1,1 +1,86 @@
-"""\nPython-side agent tools.\n\nThe @tool decorators are used ONLY for llm.bind_tools() — to generate JSON schemas\nfor the LLM so it knows the correct call signature.\n\nThe ACTUAL execution happens in python_tools_node (nodes.py), which is a plain\nLangGraph node function. It receives state: AgentState directly (no injection magic)\nand returns {\"messages\": [...ToolMessages], \"plan\": ..., ...} as a regular dict.\n\nThis means:\n  - No Command(update) complexity\n  - No InjectedToolCallId / InjectedState version pinning\n  - State updates are 100% reliable on every langgraph version\n  - SERPER_API_KEY is read in _serper_headers() — never stored in state/messages\n"""\nimport os\nimport json\nimport httpx\nfrom langchain_core.tools import tool\n\nSERPER_SEARCH_URL = \"https://google.serper.dev/search\"\nSERPER_SCRAPE_URL = \"https://scrape.serper.dev\"\n\n\ndef _serper_headers() -> dict:\n    return {\n        \"X-API-KEY\": os.environ[\"SERPER_API_KEY\"],\n        \"Content-Type\": \"application/json\",\n    }\n\n\n@tool\ndef plan_tasks(tasks: list) -> str:\n    \"\"\"\n    Create a step-by-step plan before building a syllabus.\n    ALWAYS call this first for any request involving 2+ chapters.\n\n    tasks: list of concrete step strings, e.g.:\n      [\"Search for Python basics vocabulary\",\n       \"Create syllabus: python-beginners\",\n       \"Add chapter: ch1-introduction\"]\n\n    After calling plan_tasks immediately start executing each step:\n    - Call update_plan_task(task_id=N, status='in_progress') BEFORE starting step N\n    - Call update_plan_task(task_id=N, status='done') AFTER completing step N\n    \"\"\"\n    return \"\"\n\n\n@tool\ndef update_plan_task(task_id: int, status: str) -> str:\n    \"\"\"\n    Update the status of a task in the current plan.\n\n    ALWAYS call this to keep the user informed:\n    - update_plan_task(task_id=N, status='in_progress')  before starting step N\n    - update_plan_task(task_id=N, status='done')          after completing step N\n\n    task_id: integer id from plan_tasks output (0-indexed)\n    status:  'pending' | 'in_progress' | 'done'\n    \"\"\"\n    return \"\"\n\n\n@tool\ndef search_web(\n    query: str,\n    country: str = \"us\",\n    time_period: str = \"\",\n    num_results: int = 6,\n) -> str:\n    \"\"\"\n    Search the web using the Serper API. Use this BEFORE writing any lesson to:\n    - Verify correct terminology and vocabulary for the subject\n    - Find standard curriculum structures for the field\n    - Get definitions, key concepts, and real-world examples\n\n    country:     ISO 2-letter country code (us, fr, gb, de, jp, ma, ...)\n    time_period: '' (any), 'd' (past day), 'w' (past week), 'm' (past month)\n    num_results: 1-10\n    \"\"\"\n    return \"\"\n\n\n@tool\ndef scrape_website(url: str) -> str:\n    \"\"\"\n    Scrape a specific webpage and return its full content as structured markdown.\n    Use this when a search result looks authoritative and you want the full text.\n    Best targets: Wikipedia, educational platforms, documentation, curriculum guides.\n    \"\"\"\n    return \"\"\n\n\nPYTHON_TOOLS = [plan_tasks, update_plan_task, search_web, scrape_website]\nPYTHON_TOOL_NAMES = {t.name for t in PYTHON_TOOLS}\n\n\nasync def _exec_plan_tasks(tasks: list) -> tuple[str, dict]:\n    plan = [{\"id\": i, \"task\": t, \"status\": \"pending\"} for i, t in enumerate(tasks)]\n    return (\n        json.dumps(plan),\n        {\n            \"plan\": plan,\n            \"current_activity\": f\"📋 Created a plan with {len(tasks)} steps\",\n        },\n    )\n\n\nasync def _exec_update_plan_task(\n    task_id: int,\n    status: str,\n    current_plan: list,\n) -> tuple[str, dict]:\n    if status not in (\"pending\", \"in_progress\", \"done\"):\n        return (\n            json.dumps({\"error\": f\"Invalid status '{status}'. Use: pending | in_progress | done\"}),\n            {},\n        )\n    updated = [\n        {**t, \"status\": status} if t.get(\"id\") == task_id else t\n        for t in (current_plan or [])\n    ]\n    labels = {\n        \"in_progress\": f\"🔄 Working on step {task_id + 1}…\",\n        \"done\":        f\"✅ Completed step {task_id + 1}\",\n        \"pending\":     f\"⏳ Reset step {task_id + 1} to pending\",\n    }\n    return (\n        json.dumps({\"task_id\": task_id, \"status\": status, \"ok\": True}),\n        {\"plan\": updated, \"current_activity\": labels[status]},\n    )\n\n\nasync def _exec_search_web(\n    query: str,\n    country: str = \"us\",\n    time_period: str = \"\",\n    num_results: int = 6,\n) -> tuple[str, dict]:\n    payload: dict = {\n        \"q\": query,\n        \"gl\": country,\n        \"num\": min(max(num_results, 1), 10),\n        \"hl\": \"en\",\n    }\n    if time_period:\n        payload[\"tbs\"] = f\"qdr:{time_period}\"\n    try:\n        async with httpx.AsyncClient(timeout=15) as client:\n            r = await client.post(SERPER_SEARCH_URL, json=payload, headers=_serper_headers())\n        data = r.json()\n        results = [\n            {\n                \"title\":    item.get(\"title\", \"\"),\n                \"url\":      item.get(\"link\", \"\"),\n                \"snippet\":  item.get(\"snippet\", \"\"),\n                \"position\": item.get(\"position\", 0),\n            }\n            for item in data.get(\"organic\", [])\n        ]\n        output = {\"query\": query, \"country\": country, \"total\": len(results), \"results\": results}\n        knowledge = data.get(\"knowledgeGraph\", {})\n        if knowledge:\n            output[\"knowledge_panel\"] = {\n                \"title\":       knowledge.get(\"title\", \"\"),\n                \"description\": knowledge.get(\"description\", \"\"),\n            }\n        return (\n            json.dumps(output),\n            {\n                \"search_results\": output,\n                \"current_activity\": f\"🔍 Searched: {query} ({len(results)} results)\",\n            },\n        )\n    except Exception as exc:\n        err = json.dumps({\"error\": str(exc), \"query\": query, \"results\": []})\n        return err, {\"current_activity\": f\"⚠️ Search failed: {query}\"}\n\n\nasync def _exec_scrape_website(url: str) -> tuple[str, dict]:\n    try:\n        async with httpx.AsyncClient(timeout=20) as client:\n            r = await client.post(\n                SERPER_SCRAPE_URL,\n                json={\"url\": url, \"includeMarkdown\": True},\n                headers=_serper_headers(),\n            )\n        data = r.json()\n        content = data.get(\"markdown\") or data.get(\"text\") or \"\"\n        if len(content) > 8000:\n            content = content[:8000] + \"\\n\\n[… content truncated …]\"\n        scraped = {\"url\": url, \"title\": data.get(\"title\", url), \"content\": content}\n        return (\n            json.dumps(scraped),\n            {\n                \"scraped_content\": scraped,\n                \"current_activity\": f\"🌐 Scraped: {data.get('title', url)}\",\n            },\n        )\n    except Exception as exc:\n        err = json.dumps({\"error\": str(exc), \"url\": url, \"content\": \"\"})\n        return err, {\"current_activity\": f\"⚠️ Scrape failed: {url}\"}\n
+"""Tool definitions (schemas) + async executors."""
+from __future__ import annotations
+import json
+from langchain_core.tools import tool
+from langchain_community.tools.tavily_search import TavilySearchResults
+from agent.syllabus_manager import SyllabusManager
+
+
+# ── Schema tools (used for bind_tools) ──────────────────────────────────────
+
+@tool
+def create_syllabus(title: str, description: str = "") -> str:
+    """Create a new syllabus with the given title and optional description."""
+    return ""
+
+
+@tool
+def add_chapter(syllabus_id: str, title: str, order: int = 0) -> str:
+    """Add a chapter to a syllabus."""
+    return ""
+
+
+@tool
+def add_lesson(chapter_id: str, title: str, content: str = "", order: int = 0) -> str:
+    """Add a lesson to a chapter."""
+    return ""
+
+
+@tool
+def update_lesson_content(lesson_id: str, content: str) -> str:
+    """Update the markdown content of a lesson."""
+    return ""
+
+
+@tool
+def delete_item(item_id: str, item_type: str) -> str:
+    """Delete a syllabus, chapter, or lesson by id. item_type: syllabus|chapter|lesson"""
+    return ""
+
+
+@tool
+def search_web(query: str) -> str:
+    """Search the web for educational content about a topic."""
+    return ""
+
+
+def get_tools():
+    return [create_syllabus, add_chapter, add_lesson, update_lesson_content, delete_item, search_web]
+
+
+# ── Async executors ──────────────────────────────────────────────────────────
+
+_tavily = TavilySearchResults(max_results=4)
+
+
+async def execute_tool(name: str, args: dict, config: dict) -> str:
+    mgr: SyllabusManager = config["configurable"]["syllabus_manager"]
+
+    if name == "create_syllabus":
+        obj = await mgr.create_syllabus(args["title"], args.get("description", ""))
+        return json.dumps(obj)
+
+    if name == "add_chapter":
+        obj = await mgr.add_chapter(args["syllabus_id"], args["title"], args.get("order", 0))
+        return json.dumps(obj)
+
+    if name == "add_lesson":
+        obj = await mgr.add_lesson(
+            args["chapter_id"], args["title"],
+            args.get("content", ""), args.get("order", 0)
+        )
+        return json.dumps(obj)
+
+    if name == "update_lesson_content":
+        obj = await mgr.update_lesson(args["lesson_id"], args["content"])
+        return json.dumps(obj)
+
+    if name == "delete_item":
+        obj = await mgr.delete_item(args["item_id"], args["item_type"])
+        return json.dumps(obj)
+
+    if name == "search_web":
+        results = await _tavily.ainvoke(args["query"])
+        return json.dumps(results)
+
+    return f"Unknown tool: {name}"

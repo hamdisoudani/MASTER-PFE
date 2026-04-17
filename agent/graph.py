@@ -1,1 +1,28 @@
-"""LangGraph state machine for Syllabus AI."""\nfrom langgraph.graph import StateGraph, END\nfrom langgraph.checkpoint.base import BaseCheckpointSaver\n\nfrom .state import AgentState\nfrom .nodes import chat_node, python_tools_node, PYTHON_TOOL_NAMES\n\n\ndef _should_continue(state: AgentState) -> str:\n    \"\"\"\n    Route after chat_node.\n\n      - No tool calls          -> END  (plain assistant reply)\n      - Frontend tool calls    -> END  (CopilotKit dispatches to client)\n      - Python-only tool calls -> 'tools' (python_tools_node executes server-side)\n    \"\"\"\n    messages = state.get(\"messages\") or []\n    if not messages:\n        return END\n    last       = messages[-1]\n    tool_calls = getattr(last, \"tool_calls\", None) or []\n    if not tool_calls:\n        return END\n    has_frontend = any(tc.get(\"name\") not in PYTHON_TOOL_NAMES for tc in tool_calls)\n    return END if has_frontend else \"tools\"\n\n\ndef build_graph(checkpointer: BaseCheckpointSaver):\n    builder = StateGraph(AgentState)\n    builder.add_node(\"chat\",  chat_node)\n    builder.add_node(\"tools\", python_tools_node)\n    builder.set_entry_point(\"chat\")\n    builder.add_conditional_edges(\n        \"chat\",\n        _should_continue,\n        {\"tools\": \"tools\", END: END},\n    )\n    builder.add_edge(\"tools\", \"chat\")\n    return builder.compile(checkpointer=checkpointer)\n
+from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
+from agent.state import AgentState
+from agent.nodes import chat_node, python_tools_node
+
+
+def _should_continue(state: AgentState):
+    last = state["messages"][-1]
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        return "tools"
+    return END
+
+
+def build_graph(checkpointer=None):
+    if checkpointer is None:
+        checkpointer = MemorySaver()
+
+    builder = StateGraph(AgentState)
+    builder.add_node("chat",  chat_node)
+    builder.add_node("tools", python_tools_node)
+    builder.set_entry_point("chat")
+    builder.add_conditional_edges(
+        "chat",
+        _should_continue,
+        {"tools": "tools", END: END},
+    )
+    builder.add_edge("tools", "chat")
+    return builder.compile(checkpointer=checkpointer)
