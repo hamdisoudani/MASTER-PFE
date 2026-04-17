@@ -1,21 +1,22 @@
-import { CopilotSidebar } from '@copilotkit/react-ui';
-import '@copilotkit/react-ui/styles.css';
+/**
+ * page.tsx — root shell
+ *
+ * SyllabusViewerClient owns the full 3-panel resizable layout:
+ *   [FileTree] | [BlockNote editor] | [Chat]
+ *
+ * CopilotTools is mounted invisibly here to register all
+ * useCopilotAction hooks and useAgentContext with CopilotKit.
+ */
+'use client';
+
 import { CopilotTools } from '@/components/CopilotTools';
 import SyllabusViewerClient from '@/components/SyllabusViewerClient';
 
 export default function SyllabusPage() {
   return (
-    <>
+    <div className="h-screen w-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       <SyllabusViewerClient />
       <CopilotTools />
-      <CopilotSidebar
-        defaultOpen
-        labels={{
-          title: 'Syllabus AI',
-          initial:
-            "Hello! I can build a complete course syllabus for you.\n\nJust tell me:\n- What subject you want to teach\n- The target audience (beginner / intermediate / advanced)\n- How many chapters/lessons you need\n\nI'll create the full structure with rich lesson content automatically.",
-        }}
-      />
-    </>
+    </div>
   );
 }

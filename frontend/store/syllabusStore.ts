@@ -49,6 +49,7 @@ interface SyllabusStore {
   addChapter: (syllabusId: string, chapterId: string, title: string, description?: string) => void;
   addLesson: (chapterId: string, lessonId: string, title: string, content: Block[]) => void;
   updateLessonContent: (lessonId: string, content: Block[]) => void;
+  removeSyllabus: (syllabusId: string) => void;
   removeChapter: (chapterId: string) => void;
   removeLesson: (lessonId: string) => void;
   setActiveItem: (id: string | null) => void;
@@ -135,6 +136,21 @@ export const useSyllabusStore = create<SyllabusStore>()(
               ),
             })),
           })),
+        })),
+
+      removeSyllabus: (syllabusId) =>
+        set((state) => ({
+          syllabi: state.syllabi.filter((s) => s.id !== syllabusId),
+          activeSyllabusId:
+            state.activeSyllabusId === syllabusId
+              ? (state.syllabi.find((s) => s.id !== syllabusId)?.id ?? null)
+              : state.activeSyllabusId,
+          activeItemId: state.syllabi
+            .find((s) => s.id === syllabusId)
+            ?.chapters.flatMap((c) => c.lessons)
+            .some((l) => l.id === state.activeItemId)
+            ? null
+            : state.activeItemId,
         })),
 
       removeChapter: (chapterId) =>
