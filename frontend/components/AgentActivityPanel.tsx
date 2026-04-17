@@ -1,228 +1,143 @@
 "use client";
 
-import { useCoAgentStateRender } from "@copilotkit/react-core";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Progress } from "@/components/ui/progress";
+import React from "react";
+import { useCopilotChat } from "@copilotkit/react-core";
+import { PlanStep } from "./SyllabusViewerClient";
 
-type TaskStatus = "pending" | "in_progress" | "done";
-
-interface PlanTask {
-  id: number;
-  task: string;
-  status: TaskStatus;
+interface AgentActivityPanelProps {
+  planSteps: PlanStep[];
+  currentStepIndex: number;
+  planStatus: string;
+  currentActivity: string;
 }
 
-interface SearchResult {
-  title: string;
-  url: string;
-  snippet: string;
-}
+const statusIcon = (status: PlanStep["status"]) => {
+  if (status === "done") return "✅";
+  if (status === "searching") return "🔋";
+  if (status === "pending") return "⍷";
+  return "💧";
+};
 
-interface AgentState {
-  plan?: PlanTask[] | null;
-  search_results?: {
-    query: string;
-    total: number;
-    results: SearchResult[];
-    knowledge_panel?: { title: string; description: string };
-  } | null;
-  scraped_content?: { url: string; title: string; content: string } | null;
-  current_activity?: string | null;
-}
+const stepTypeLabel = (type: PlanStep["type"]) =>
+  type === "search" ? "Search" : "Task";
 
-// ─── Task status icons / styles ───────────────────────────────────────────────
-
-function TaskIcon({ status }: { status: TaskStatus }) {
-  if (status === "done") {
-    return (
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-green-500/20 text-green-400 text-[10px] font-bold">
-        ✓
-      </span>
-    );
-  }
-  if (status === "in_progress") {
-    return (
-      <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/40" />
-        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
-      </span>
-    );
-  }
-  // pending
-  return (
-    <span className="h-4 w-4 shrink-0 rounded-full border border-border" />
-  );
-}
-
-function taskLabelClass(status: TaskStatus): string {
-  if (status === "done") return "line-through text-muted-foreground";
-  if (status === "in_progress") return "text-foreground font-medium";
-  return "text-muted-foreground";
-}
-
-// ─── Plan panel ───────────────────────────────────────────────────────────────
-
-function PlanPanel({ plan }: { plan: PlanTask[] }) {
-  const doneCount = plan.filter((t) => t.status === "done").length;
-  const inProgressCount = plan.filter((t) => t.status === "in_progress").length;
-  const pct = plan.length > 0 ? Math.round((doneCount / plan.length) * 100) : 0;
+export function AgentActivityPanel({
+  planSteps,
+  currentStepIndex,
+  planStatus,
+  currentActivity,
+}: AgentActivityPanelProps) {
+  const { isLoading } = useCopilotChat();
 
   return (
-    <Card className="mb-3">
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="flex items-center gap-1.5 text-xs">
-            <span>📋</span> Plan
-            {inProgressCount > 0 && (
-              <span className="inline-flex h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-            )}
-          </CardTitle>
-          <Badge variant="muted" className="tabular-nums">
-            {doneCount}/{plan.length}
-          </Badge>
-        </div>
-        {plan.length > 0 && (
-          <Progress value={pct} className="mt-1.5 h-1" />
+    <div className="flex flex-col h-full bg-[var(--background)] text-[var(--foreground)]">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
+        <span className="text-sm font-semibold tracking-wide uppercase opacity-70">
+          Agent Activity
+        </span>
+        {isLoading && (
+          <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-white/10 animate-pulse">
+            thinking…
+          </span>
         )}
-      </CardHeader>
-
-      <CardContent className="pt-0">
-        <ol className="space-y-2">
-          {plan.map((task) => (
-            <li key={task.id} className="flex items-start gap-2.5">
-              <TaskIcon status={task.status} />
-              <span className={`text-xs leading-relaxed ${taskLabelClass(task.status)}`}>
-                {task.task}
-              </span>
-            </li>
-          ))}
-        </ol>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Search panel ─────────────────────────────────────────────────────────────
-
-function SearchPanel({ data }: { data: NonNullable<AgentState["search_results"]> }) {
-  return (
-    <Card className="mb-3">
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-1.5 text-xs">
-            <span>🔍</span> Search Results
-          </CardTitle>
-          <Badge variant="outline">{data.total}</Badge>
-        </div>
-        <p className="text-xs text-muted-foreground truncate mt-0.5">
-          &ldquo;{data.query}&rdquo;
-        </p>
-      </CardHeader>
-      <CardContent className="pt-0">
-        {data.knowledge_panel?.title && (
-          <>
-            <div className="mb-2 rounded-md bg-muted p-2.5">
-              <p className="text-xs font-semibold mb-0.5">{data.knowledge_panel.title}</p>
-              <p className="text-xs text-muted-foreground line-clamp-2">
-                {data.knowledge_panel.description}
-              </p>
-            </div>
-            <Separator className="mb-2" />
-          </>
+        {planStatus === "done" && (
+          <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-300">
+            done
+          </span>
         )}
-        <ScrollArea className="max-h-40">
-          <div className="space-y-2.5 pr-2">
-            {data.results.slice(0, 5).map((r, i) => (
-              <div key={i}>
-                <a
-                  href={r.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block text-xs font-medium text-primary hover:underline truncate"
-                >
-                  {r.title}
-                </a>
-                <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
-                  {r.snippet}
-                </p>
+      </div>
+
+      {/* Current activity */}
+      {currentActivity && (
+        <div className="px-4 py-2 text-xs text-[var(--muted)] border-b border-[var(--border)] truncate">
+          {currentActivity}
+        </div>
+      )}
+
+      {/* Steps list */}
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+        {planSteps.length === 0 && (
+          <p className="text-xs text-[var(--muted)] text-center mt-8">
+            No plan yet. Ask the agent to research a topic.
+          </p>
+        )}
+
+        {planSteps.map((step, i) => {
+          const isActive = i === currentStepIndex && planStatus === "in_progress";
+          return (
+            <div
+              key={i}
+              className={[
+                "rounded-lg px-3 py-2 border transition-all",
+                isActive
+                  ? "border-[var(--accent)] bg-white/5"
+                  : "border-[var(--border)] bg-white/[0.02]",
+              ].join(" ")}
+            >
+              <div className="flex items-start gap-2">
+                <span className="text-base leading-none mt-0.5">
+                  {statusIcon(step.status)}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span
+                      className={[
+                        "text-[10px] font-mono px-1.5 py-0.5 rounded uppercase tracking-wider",
+                        step.type === "search"
+                          ? "bg-blue-500/20 text-blue-300"
+                          : "bg-purple-500/20 text-purple-300",
+                      ].join(" ")}
+                    >
+                      {stepTypeLabel(step.type)}
+                    </span>
+                    <span className="text-[10px] text-[var(--muted)]">
+                      #{i + 1}
+                    </span>
+                  </div>
+                  <p className="text-xs leading-snug truncate">
+                    {step.description}
+                  </p>
+                  {step.queries && step.queries.length > 0 && (
+                    <div className="mt-1 space-y-0.5">
+                      {step.queries.map((q, qi) => (
+                        <p
+                          key={qi}
+                          className="text-[10px] text-[var(--muted)] truncate pl-2 border-l border-white/10"
+                        >
+                          {q}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            ))}
-          </div>
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Scrape panel ─────────────────────────────────────────────────────────────
-
-function ScrapePanel({ data }: { data: NonNullable<AgentState["scraped_content"]> }) {
-  const preview = data.content
-    ? data.content.replace(/#+\s/g, "").slice(0, 280).trim() + "…"
-    : "No content";
-  return (
-    <Card className="mb-3">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-1.5 text-xs">
-          <span>📄</span> Scraped Page
-        </CardTitle>
-        <p className="text-xs text-muted-foreground truncate mt-0.5">
-          {data.title || data.url}
-        </p>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <ScrollArea className="max-h-28">
-          <p className="text-xs text-muted-foreground pr-2 leading-relaxed">{preview}</p>
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Root export ──────────────────────────────────────────────────────────────
-
-export function AgentActivityPanel() {
-  useCoAgentStateRender<AgentState>({
-    name: "syllabus_agent",
-    render: ({ state, status }) => {
-      const hasPlan =
-        Array.isArray(state?.plan) && (state.plan?.length ?? 0) > 0;
-      const hasSearch =
-        state?.search_results && (state.search_results?.results?.length ?? 0) > 0;
-      const hasScrape = state?.scraped_content?.content;
-      const hasActivity = state?.current_activity;
-
-      if (!hasPlan && !hasSearch && !hasScrape && !hasActivity) return null;
-
-      return (
-        <div className="p-3 space-y-1">
-          {/* Activity line */}
-          {hasActivity && (
-            <div className="flex items-center gap-2 mb-3">
-              {status === "inProgress" && (
-                <span className="h-2 w-2 rounded-full bg-primary animate-pulse shrink-0" />
-              )}
-              <p className="text-xs text-muted-foreground truncate">
-                {state.current_activity}
-              </p>
             </div>
-          )}
+          );
+        })}
+      </div>
 
-          {/* Todo plan */}
-          {hasPlan && <PlanPanel plan={state.plan!} />}
-
-          {/* Search results */}
-          {hasSearch && <SearchPanel data={state.search_results!} />}
-
-          {/* Scraped content */}
-          {hasScrape && <ScrapePanel data={state.scraped_content!} />}
+      {/* Footer progress */}
+      {planSteps.length > 0 && (
+        <div className="px-4 py-2 border-t border-[var(--border)] flex items-center gap-2">
+          <div className="flex-1 h-1 rounded-full bg-white/10 overflow-hidden">
+            <div
+              className="h-full bg-[var(--accent)] transition-all duration-500"
+              style={{
+                width: `${Math.round(
+                  (planSteps.filter((s) => s.status === "done").length /
+                    planSteps.length) *
+                    100
+                )}%`,
+              }}
+            />
+          </div>
+          <span className="text-[10px] text-[var(--muted)] shrink-0">
+            {planSteps.filter((s) => s.status === "done").length}/
+            {planSteps.length}
+          </span>
         </div>
-      );
-    },
-  });
-
-  return null;
+      )}
+    </div>
+  );
 }
