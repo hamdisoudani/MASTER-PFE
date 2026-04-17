@@ -5,10 +5,10 @@ import { useCopilotChat } from "@copilotkit/react-core";
 import { PlanStep } from "./SyllabusViewerClient";
 
 interface AgentActivityPanelProps {
-  planSteps: PlanStep[];
-  currentStepIndex: number;
-  planStatus: string;
-  currentActivity: string;
+  planSteps?: PlanStep[];
+  currentStepIndex?: number;
+  planStatus?: string;
+  currentActivity?: string;
 }
 
 const statusIcon = (status: PlanStep["status"]) => {
@@ -22,10 +22,10 @@ const stepTypeLabel = (type: PlanStep["type"]) =>
   type === "search" ? "Search" : "Task";
 
 export function AgentActivityPanel({
-  planSteps,
-  currentStepIndex,
-  planStatus,
-  currentActivity,
+  planSteps = [],
+  currentStepIndex = 0,
+  planStatus = "idle",
+  currentActivity = "",
 }: AgentActivityPanelProps) {
   const { isLoading } = useCopilotChat();
 
