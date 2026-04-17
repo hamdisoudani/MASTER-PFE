@@ -1,41 +1,22 @@
-"""Tool definitions (schemas) + async executors."""
+"""Tool definitions + async executors aligned with AgentState."""
 from __future__ import annotations
 import json
 from langchain_core.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
-from agent.syllabus_manager import SyllabusManager
 
-
-# ── Schema tools (used for bind_tools) ──────────────────────────────────────
-
-@tool
-def create_syllabus(title: str, description: str = "") -> str:
-    """Create a new syllabus with the given title and optional description."""
-    return ""
+_tavily = TavilySearchResults(max_results=4)
 
 
 @tool
-def add_chapter(syllabus_id: str, title: str, order: int = 0) -> str:
-    """Add a chapter to a syllabus."""
-    return ""
+def set_plan(tasks: list[dict]) -> str:
+    """Set the agent execution plan. tasks is a list of {id, task, status} dicts."""
+    return json.dumps(tasks)
 
 
 @tool
-def add_lesson(chapter_id: str, title: str, content: str = "", order: int = 0) -> str:
-    """Add a lesson to a chapter."""
-    return ""
-
-
-@tool
-def update_lesson_content(lesson_id: str, content: str) -> str:
-    """Update the markdown content of a lesson."""
-    return ""
-
-
-@tool
-def delete_item(item_id: str, item_type: str) -> str:
-    """Delete a syllabus, chapter, or lesson by id. item_type: syllabus|chapter|lesson"""
-    return ""
+def update_activity(activity: str) -> str:
+    """Update the current activity description shown to the user."""
+    return activity
 
 
 @tool
@@ -44,43 +25,32 @@ def search_web(query: str) -> str:
     return ""
 
 
+@tool
+def mark_finished(finished: bool = True) -> str:
+    """Mark the agent task as finished."""
+    return str(finished)
+
+
 def get_tools():
-    return [create_syllabus, add_chapter, add_lesson, update_lesson_content, delete_item, search_web]
+    return [set_plan, update_activity, search_web, mark_finished]
 
 
-# ── Async executors ──────────────────────────────────────────────────────────
+async def execute_tool(name: str, args: dict, config: dict) -> dict:
+    """Execute a tool by name and return a state-patch dict."""
+    if name == "set_plan":
+        return {"plan": args.get("tasks", [])}
 
-_tavily = TavilySearchResults(max_results=4)
+    if name == "update_activity":
+        return {"current_activity": args.get("activity", "")}
 
-
-async def execute_tool(name: str, args: dict, config: dict) -> str:
-    mgr: SyllabusManager = config["configurable"]["syllabus_manager"]
-
-    if name == "create_syllabus":
-        obj = await mgr.create_syllabus(args["title"], args.get("description", ""))
-        return json.dumps(obj)
-
-    if name == "add_chapter":
-        obj = await mgr.add_chapter(args["syllabus_id"], args["title"], args.get("order", 0))
-        return json.dumps(obj)
-
-    if name == "add_lesson":
-        obj = await mgr.add_lesson(
-            args["chapter_id"], args["title"],
-            args.get("content", ""), args.get("order", 0)
-        )
-        return json.dumps(obj)
-
-    if name == "update_lesson_content":
-        obj = await mgr.update_lesson(args["lesson_id"], args["content"])
-        return json.dumps(obj)
-
-    if name == "delete_item":
-        obj = await mgr.delete_item(args["item_id"], args["item_type"])
-        return json.dumps(obj)
+    if name == "mark_finished":
+        return {"finished": args.get("finished", True)}
 
     if name == "search_web":
         results = await _tavily.ainvoke(args["query"])
-        return json.dumps(results)
+        return {
+            "search_results": {"query": args["query"], "results": results},
+            "current_activity": f"Searched: {args['query']}",
+        }
 
-    return f"Unknown tool: {name}"
+    return {}
