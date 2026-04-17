@@ -3,160 +3,139 @@
 import { useState, useRef, useEffect } from "react";
 import { useCopilotChat } from "@copilotkit/react-core";
 import { Role, TextMessage } from "@copilotkit/runtime-client-gql";
-import { useAgentState } from "@copilotkit/react-core";
-import { Send, Loader2, BotMessageSquare, CheckCircle2, Circle, ArrowRight } from "lucide-react";
+import { useCoAgent } from "@copilotkit/react-core";
+import { Send, Loader2, BotMessageSquare, CheckCircle2, Circle, Clock } from "lucide-react";
 
-interface PlanTask {
+type TaskStatus = "pending" | "in_progress" | "done";
+
+interface Task {
   id: number;
-  task: string;
-  status: "pending" | "in_progress" | "done";
+  description: string;
+  status: TaskStatus;
 }
 
 interface AgentState {
-  plan?: PlanTask[];
-  current_activity?: string;
+  tasks?: Task[];
+  syllabus?: string;
+  messages?: Array<{ role: string; content: string }>;
 }
 
 const EMPTY_STATE: AgentState = {};
 
-export function CustomChat() {
-  const { visibleMessages, appendMessage, isLoading } = useCopilotChat();
-  const [agentState] = useAgentState<AgentState>("syllabus-agent", EMPTY_STATE);
+function TaskStatusIcon({ status }: { status: TaskStatus }) {
+  if (status === "done") return <CheckCircle2 className="w-4 h-4 text-green-400" />;
+  if (status === "in_progress") return <Clock className="w-4 h-4 text-yellow-400 animate-spin" />;
+  return <Circle className="w-4 h-4 text-gray-400" />;
+}
+
+export function Chat() {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const plan: PlanTask[] = agentState?.plan ?? [];
-  const currentActivity: string = agentState?.current_activity ?? "";
+  const { appendMessage, messages, isLoading } = useCopilotChat();
+  const { state: agentState } = useCoAgent<AgentState>({
+    name: "syllabus_agent",
+    initialState: EMPTY_STATE,
+  });
+
+  const tasks: Task[] = agentState?.tasks ?? [];
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [visibleMessages, plan]);
+  }, [messages]);
 
-  function handleSend() {
-    const text = input.trim();
-    if (!text || isLoading) return;
-    appendMessage(new TextMessage({ content: text, role: Role.User }));
+  const handleSend = () => {
+    if (!input.trim() || isLoading) return;
+    appendMessage(new TextMessage({ content: input, role: Role.User }));
     setInput("");
-  }
+  };
 
-  function handleKey(e: React.KeyboardEvent) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
-  }
+  };
 
   return (
-    <div className="flex flex-col h-full bg-[var(--card)] text-[var(--text)]">
-
-      {/* Header */}
-      <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] bg-[var(--card)]">
-        <BotMessageSquare className="w-4 h-4 text-[var(--primary)]" />
-        <span className="text-xs font-semibold flex-1 truncate">
-          {currentActivity || "AI Assistant"}
-        </span>
-        {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--muted)]" />}
-      </div>
-
-      {/* Plan strip */}
-      {plan.length > 0 && (
-        <div className="shrink-0 border-b border-[var(--border)] px-2 py-1.5 space-y-0.5 bg-[var(--bg)] max-h-40 overflow-y-auto">
-          {plan.map((task) => (
-            <div key={task.id} className="flex items-start gap-1.5 text-xs">
-              <PlanIcon status={task.status} />
-              <span
-                className={`flex-1 leading-snug ${
-                  task.status === "done"
-                    ? "text-[var(--muted)] line-through"
-                    : task.status === "in_progress"
-                    ? "text-[var(--primary)] font-medium"
-                    : "text-[var(--muted)]"
-                }`}
-              >
-                {task.task}
-              </span>
-            </div>
-          ))}
+    <div className="flex flex-col h-full bg-[#0d0d0d] text-white">
+      {/* Task progress panel */}
+      {tasks.length > 0 && (
+        <div className="border-b border-white/10 px-4 py-3 bg-white/5">
+          <p className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Agent Plan</p>
+          <ul className="space-y-1">
+            {tasks.map((t) => (
+              <li key={t.id} className="flex items-center gap-2 text-sm">
+                <TaskStatusIcon status={t.status} />
+                <span className={t.status === "done" ? "line-through text-white/40" : ""}>
+                  {t.description}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
-        {visibleMessages.length === 0 && (
-          <p className="text-xs text-center text-[var(--muted)] mt-8 opacity-70">
-            Ask me to create a syllabus, add chapters, or search topics.
-          </p>
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-center text-white/30 gap-3">
+            <BotMessageSquare className="w-12 h-12" />
+            <p className="text-sm">Ask the syllabus AI anything.<br />It can search the web and build full course outlines.</p>
+          </div>
         )}
-        {visibleMessages.map((msg, i) => {
-          const isUser = msg.role === Role.User;
-          const text =
-            msg instanceof TextMessage
-              ? msg.content
-              : "[non-text message]";
+
+        {messages.map((msg, i) => {
+          const isUser = msg instanceof TextMessage && msg.role === Role.User;
+          const content = msg instanceof TextMessage ? msg.content : null;
+          if (!content) return null;
+
           return (
             <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
               <div
-                className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap break-words ${
+                className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap ${
                   isUser
-                    ? "bg-[var(--primary)] text-white rounded-br-none"
-                    : "bg-[var(--muted)]/15 text-[var(--text)] rounded-bl-none"
+                    ? "bg-indigo-600 text-white"
+                    : "bg-white/10 text-white/90"
                 }`}
               >
-                {text}
+                {content}
               </div>
             </div>
           );
         })}
+
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-[var(--muted)]/15 rounded-xl rounded-bl-none px-3 py-2">
-              <span className="flex gap-1">
-                {[0, 1, 2].map((d) => (
-                  <span
-                    key={d}
-                    className="w-1.5 h-1.5 rounded-full bg-[var(--muted)] animate-bounce"
-                    style={{ animationDelay: `${d * 150}ms` }}
-                  />
-                ))}
-              </span>
+            <div className="bg-white/10 rounded-2xl px-4 py-2">
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
             </div>
           </div>
         )}
+
         <div ref={bottomRef} />
       </div>
 
       {/* Input */}
-      <div className="shrink-0 border-t border-[var(--border)] p-2">
-        <div className="flex items-end gap-2 bg-[var(--bg)] rounded-xl border border-[var(--border)] px-3 py-2 focus-within:border-[var(--primary)] transition-colors">
+      <div className="border-t border-white/10 p-4">
+        <div className="flex gap-2 items-end">
           <textarea
+            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:border-indigo-500 placeholder:text-white/30"
+            rows={2}
+            placeholder="Describe the course you want to plan..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Ask the AI…"
-            rows={1}
-            className="flex-1 resize-none bg-transparent text-xs text-[var(--text)] placeholder:text-[var(--muted)] outline-none max-h-28 overflow-y-auto"
+            onKeyDown={handleKeyDown}
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || isLoading}
-            className="shrink-0 p-1.5 rounded-lg bg-[var(--primary)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
+            className="p-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            {isLoading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Send className="w-3.5 h-3.5" />
-            )}
+            <Send className="w-4 h-4" />
           </button>
         </div>
       </div>
     </div>
   );
-}
-
-function PlanIcon({ status }: { status: PlanTask["status"] }) {
-  if (status === "done")
-    return <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-green-500 mt-px" />;
-  if (status === "in_progress")
-    return <ArrowRight className="w-3.5 h-3.5 shrink-0 text-[var(--primary)] mt-px" />;
-  return <Circle className="w-3.5 h-3.5 shrink-0 text-[var(--muted)] mt-px" />;
 }
