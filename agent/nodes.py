@@ -1,7 +1,7 @@
 import json
 from typing import Any
 from langchain_core.messages import AIMessage, ToolMessage
-from langchain_openai.import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import ToolNode
 from copilotkit.langchain import copilotkit_emit_state
 
