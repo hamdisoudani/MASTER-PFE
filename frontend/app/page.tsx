@@ -1,22 +1,20 @@
-/**
- * page.tsx — root shell
- *
- * SyllabusViewerClient owns the full 3-panel resizable layout:
- *   [FileTree] | [BlockNote editor] | [Chat]
- *
- * CopilotTools is mounted invisibly here to register all
- * useCopilotAction hooks and useAgentContext with CopilotKit.
- */
-'use client';
+import dynamic from 'next/dynamic';
 
-import { CopilotTools } from '@/components/CopilotTools';
-import SyllabusViewerClient from '@/components/SyllabusViewerClient';
+const SyllabusViewerClient = dynamic(
+  () => import('../components/SyllabusViewerClient'),
+  { ssr: false }
+);
 
-export default function SyllabusPage() {
+const CopilotTools = dynamic(
+  () => import('../components/CopilotTools').then(m => ({ default: m.CopilotTools })),
+  { ssr: false }
+);
+
+export default function Home() {
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
-      <SyllabusViewerClient />
+    <main>
       <CopilotTools />
-    </div>
+      <SyllabusViewerClient />
+    </main>
   );
 }

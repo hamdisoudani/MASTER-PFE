@@ -1,1 +1,126 @@
-"""\nPython-side agent tools.\n\nThe @tool decorators are used ONLY for llm.bind_tools() — to generate JSON schemas\nfor the LLM so it knows the correct call signature.\n\nThe ACTUAL execution happens in python_tools_node (nodes.py), which is a plain\nLangGraph node function. It receives state: AgentState directly (no injection magic)\nand returns {\"messages\": [...ToolMessages], \"plan\": ..., ...} as a regular dict.\n\nThis means:\n  - No Command(update) complexity\n  - No InjectedToolCallId / InjectedState version pinning\n  - State updates are 100% reliable on every langgraph version\n  - SERPER_API_KEY is read in _serper_headers() — never stored in state/messages\n\"\"\"\nimport os\nimport json\nimport httpx\nfrom langchain_core.tools import tool\n\nSERPER_SEARCH_URL = \"https://google.serper.dev/search\"\nSERPER_SCRAPE_URL = \"https://scrape.serper.dev\"\n\n\ndef _serper_headers() -> dict:\n    return {\n        \"X-API-KEY\": os.environ[\"SERPER_API_KEY\"],\n        \"Content-Type\": \"application/json\",\n    }\n\n\n@tool\ndef plan_tasks(tasks: list) -> str:\n    \"\"\"\n    Create a step-by-step plan before building a syllabus.\n    ALWAYS call this first for any request involving 2+ chapters.\n\n    tasks: list of concrete step strings, e.g.:\n      [\"Search for Python basics vocabulary\",\n       \"Create syllabus: python-beginners\",\n       \"Add chapter: ch1-introduction\"]\n\n    After calling plan_tasks immediately start executing each step:\n    - Call update_plan_task(task_id=N, status='in_progress') BEFORE starting step N\n    - Call update_plan_task(task_id=N, status='done') AFTER completing step N\n    \"\"\"\n    return \"\"\n\n\n@tool\ndef update_plan_task(task_id: int, status: str) -> str:\n    \"\"\"\n    Update the status of a task in the current plan.\n\n    ALWAYS call this to keep the user informed:\n    - update_plan_task(task_id=N, status='in_progress')  before starting step N\n    - update_plan_task(task_id=N, status='done')          after completing step N\n\n    task_id: integer id from plan_tasks output (0-indexed)\n    status:  'pending' | 'in_progress' | 'done'\n    \"\"\"\n    return \"\"\n\n\n@tool\ndef search_web(\n    query: str,\n    country: str = \"us\",\n    time_period: str = \"\",\n    num_results: int = 6,\n) -> str:\n    \"\"\"\n    Search the web using the Serper API. Use this BEFORE writing any lesson to:\n    - Verify correct terminology and vocabulary for the subject\n    - Find standard curriculum structures for the field\n    - Get definitions, key concepts, and real-world examples\n\n    country:     ISO 2-letter country code (us, fr, gb, de, jp, ma, ...)\n    time_period: '' (any), 'd' (past day), 'w' (past week), 'm' (past month)\n    num_results: 1-10\n    \"\"\"\n    return \"\"\n\n\n@tool\ndef scrape_website(url: str) -> str:\n    \"\"\"\n    Scrape a specific webpage and return its full content as structured markdown.\n    Use this when a search result looks authoritative and you want the full text.\n    Best targets: Wikipedia, educational platforms, documentation, curriculum guides.\n    \"\"\"\n    return \"\"\n\n\nPYTHON_TOOLS = [plan_tasks, update_plan_task, search_web, scrape_website]\nPYTHON_TOOL_NAMES = {t.name for t in PYTHON_TOOLS}\n\n\n# ─── Actual implementations (called by python_tools_node in nodes.py) ────────\n\nasync def _exec_plan_tasks(tasks: list) -> tuple[str, dict]:\n    plan = [{\"id\": i, \"task\": t, \"status\": \"pending\"} for i, t in enumerate(tasks)]\n    return (\n        json.dumps(plan),\n        {\n            \"plan\": plan,\n            \"current_activity\": f\"📋 Created a plan with {len(tasks)} steps\",\n        },\n    )\n\n\nasync def _exec_update_plan_task(\n    task_id: int,\n    status: str,\n    current_plan: list,\n) -> tuple[str, dict]:\n    if status not in (\"pending\", \"in_progress\", \"done\"):\n        return (\n            json.dumps({\"error\": f\"Invalid status '{status}'. Use: pending | in_progress | done\"}),\n            {},\n        )\n    updated = [\n        {**t, \"status\": status} if t.get(\"id\") == task_id else t\n        for t in (current_plan or [])\n    ]\n    labels = {\n        \"in_progress\": f\"🔄 Working on step {task_id + 1}…\",\n        \"done\":        f\"✅ Completed step {task_id + 1}\",\n        \"pending\":     f\"⏳ Reset step {task_id + 1} to pending\",\n    }\n    return (\n        json.dumps({\"task_id\": task_id, \"status\": status, \"ok\": True}),\n        {\"plan\": updated, \"current_activity\": labels[status]},\n    )\n\n\nasync def _exec_search_web(\n    query: str,\n    country: str = \"us\",\n    time_period: str = \"\",\n    num_results: int = 6,\n) -> tuple[str, dict]:\n    payload: dict = {\n        \"q\": query,\n        \"gl\": country,\n        \"num\": min(max(num_results, 1), 10),\n        \"hl\": \"en\",\n    }\n    if time_period:\n        payload[\"tbs\"] = f\"qdr:{time_period}\"\n\n    try:\n        async with httpx.AsyncClient(timeout=15) as client:\n            r = await client.post(SERPER_SEARCH_URL, json=payload, headers=_serper_headers())\n        data = r.json()\n        results = [\n            {\n                \"title\":   item.get(\"title\", \"\"),\n                \"url\":     item.get(\"link\", \"\"),\n                \"snippet\": item.get(\"snippet\", \"\"),\n                \"position\": item.get(\"position\", 0),\n            }\n            for item in data.get(\"organic\", [])\n        ]\n        output = {\"query\": query, \"country\": country, \"total\": len(results), \"results\": results}\n        knowledge = data.get(\"knowledgeGraph\", {})\n        if knowledge:\n            output[\"knowledge_panel\"] = {\n                \"title\":       knowledge.get(\"title\", \"\"),\n                \"description\": knowledge.get(\"description\", \"\"),\n            }\n        return (\n            json.dumps(output),\n            {\n                \"search_results\": output,\n                \"current_activity\": f\"🔍 Searched: {query} ({len(results)} results)\",\n            },\n        )\n    except Exception as exc:\n        err = json.dumps({\"error\": str(exc), \"query\": query, \"results\": []})\n        return err, {\"current_activity\": f\"⚠️ Search failed: {query}\"}\n\n\nasync def _exec_scrape_website(url: str) -> tuple[str, dict]:\n    try:\n        async with httpx.AsyncClient(timeout=20) as client:\n            r = await client.post(\n                SERPER_SCRAPE_URL,\n                json={\"url\": url, \"includeMarkdown\": True},\n                headers=_serper_headers(),\n            )\n        data = r.json()\n        content = data.get(\"markdown\") or data.get(\"text\") or \"\"\n        if len(content) > 8000:\n            content = content[:8000] + \"\\n\\n[… content truncated …]\"\n        scraped = {\"url\": url, \"title\": data.get(\"title\", url), \"content\": content}\n        return (\n            json.dumps(scraped),\n            {\n                \"scraped_content\": scraped,\n                \"current_activity\": f\"🌐 Scraped: {data.get('title', url)}\",\n            },\n        )\n    except Exception as exc:\n        err = json.dumps({\"error\": str(exc), \"url\": url, \"content\": \"\"})\n        return err, {\"current_activity\": f\"⚠️ Scrape failed: {url}\"}
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_community.utilities.serpapi import SerpAPIWrapper
+from langchain_community.utilities import RequestsWrapper
+import os
+from typing import List, Optional
+
+# ------------------------------------------------------------------------
+# Schemas
+# ------------------------------------------------------------------------
+
+from pydantic import BaseModel, Field
+
+class PlanTaskInput(BaseModel):
+    tasks: List[str] = Field(..., description="List of task descriptions to plan")
+
+class UpdatePlanTaskInput(BaseModel):
+    task_id: int = Field(..., description="The 0-based index of the task to update")
+    status: str = Field(..., description="New status: 'pending', 'in_progress', or 'done'")
+
+class SearchWebInput(BaseModel):
+    query: str = Field(..., description="Search query")
+    num_results: int = Field(default=5, description="Number of results to return")
+
+class ScrapeWebsiteInput(BaseModel):
+    url: str = Field(..., description="URL to scrape")
+    max_chars: int = Field(default=8000, description="Max characters to return from the page")
+
+# ------------------------------------------------------------------------
+# Tools
+# ------------------------------------------------------------------------
+
+@tool
+def plan_tasks(tasks: List[str]) -> str:
+    """
+    Create a plan with a list of tasks.
+    Use this tool at the start of a response to break the work into
+    clear steps that will be visible to the user.
+    """
+    return f"Planned {len(tasks)} tasks: {tasks}"
+
+
+@tool
+def update_plan_task(task_id: int, status: str) -> str:
+    """
+    Update the status of a plan task.
+    Status must be one of: 'pending', 'in_progress', 'done'.
+    Use this to keep the user informed of progress.
+    """
+    valid_statuses = {"pending", "in_progress", "done"}
+    if status not in valid_statuses:
+        return f"Error: invalid status '{status}'. Must be one of: {valid_statuses}"
+    return f"Updated task {task_id} to status '{status}'"
+
+
+@tool
+def search_web(query: str, num_results: int = 5) -> str:
+    """
+    Search the web using Serp API and return organic search results.
+    Use this when you need to find information about a topic or curriculum.
+    """
+    try:
+        api_key = os.getenv("SERPAPI_KEY", "")
+        if not api_key:
+            return "Search skipped: SERPAPI_KEY not configured"
+
+        serp = SerpAPIWrapper(serpapi_api_key=api_key)
+        results = serp.results(query)
+
+        output_parts = []
+
+        # Knowledge panel
+        if "knowledge_graph" in results:
+            kg = results["knowledge_graph"]
+            output_parts.append(
+                f"Knowledge Panel: {kg.get('title', '')}\n{kg.get('description', '')}"
+            )
+
+        # Organic results
+        organic = results.get("organic_results", [])
+        for i, r in enumerate(organic[:num_results]):
+            output_parts.append(
+                f"[{i+1}] {r.get('title', 'No title')}\n"
+                f"   URL: {r.get('link', '')}\n"
+                f"   {r.get('snippet', '')}"
+            )
+
+        return "\n\n".join(output_parts) if output_parts else "No results found"
+
+    except Exception as e:
+        return f"Search error: {e}"
+
+
+@tool
+def scrape_website(url: str, max_chars: int = 8000) -> str:
+    """
+    Scrape the text content of a website URL.
+    Use this after search_web to get detailed content from a specific page.
+    """
+    try:
+        wrapper = RequestsWrapper()
+        html = wrapper.get(url)
+
+        # Strip HTML tags with a simple regex-based approach
+        import re
+        text = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n\n[Truncated at {max_chars} chars. Original length: {len(text)}]"
+
+        return f"URL: {url}\n\n{text}"
+
+    except Exception as e:
+        return f"Scrape error for {url}: {e}"
+
+
+# Exported list used by graph.py
+PYTHON_TOOLS = [
+    plan_tasks,
+    update_plan_task,
+    search_web,
+    scrape_website,
+]
