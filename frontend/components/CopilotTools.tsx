@@ -75,7 +75,6 @@ export function CopilotTools() {
       { name: "content",   type: "object[]", description: "Initial BlockNote content blocks", required: false },
     ],
     handler: ({ chapterId, lessonId, title, content }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       addLesson(chapterId as string, lessonId as string, title as string, (content ?? []) as any);
     },
   });
@@ -88,7 +87,6 @@ export function CopilotTools() {
       { name: "content",  type: "object[]", description: "New BlockNote content blocks" },
     ],
     handler: ({ lessonId, content }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       updateLessonContent(lessonId as string, (content ?? []) as any);
     },
   });
