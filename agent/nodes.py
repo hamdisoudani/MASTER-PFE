@@ -12,9 +12,9 @@ from .search import run_search_step, scrape_selected
 import os
 
 llm = ChatOpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.environ.get("NVIDIA_API_KEY", ""),
-    model="mistralai/mistral-small-4-119b-2603",
+    base_url=os.environ.get("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+    api_key=os.environ.get("LLM_API_KEY", ""),
+    model=os.environ.get("LLM_MODEL", "mistralai/mistral-small-4-119b-2603"),
     temperature=0.2,
 )
 
