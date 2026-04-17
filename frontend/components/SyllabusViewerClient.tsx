@@ -24,6 +24,13 @@ import { CopilotChat } from "@copilotkit/react-ui";
  *  - AG-UI streaming state renders (plan, search results, scrape) appear
  *    naturally in the conversation thread
  */
+export interface PlanStep {
+  description: string;
+  type: "search" | "task";
+  status: "done" | "searching" | "pending" | string;
+  queries?: string[];
+}
+
 export default function SyllabusViewerClient() {
   const { getActiveLesson } = useSyllabusStore();
   const activeLesson = getActiveLesson();
