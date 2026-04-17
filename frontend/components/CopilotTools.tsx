@@ -1,215 +1,133 @@
 "use client";
 
-import { useCopilotAction } from "@copilotkit/react-core";
-import { useCopilotReadable } from "@copilotkit/react-core";
-import { useSyllabusStore, Block } from "@/store/syllabusStore";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { useCopilotAction, useCopilotReadable } from "@copilotkit/react-core";
+import { useSyllabusStore } from "@/store/syllabusStore";
 import { AgentActivityPanel } from "@/components/AgentActivityPanel";
 
-// ─── Status indicator ─────────────────────────────────────────────────────────
-function StatusDot({ status }: { status: "pending" | "in_progress" | "done" }) {
-  const colors = {
-    pending: "bg-gray-400",
-    in_progress: "bg-yellow-400 animate-pulse",
-    done: "bg-green-400",
-  };
-  return (
-    <span
-      className={`inline-block w-2 h-2 rounded-full ${colors[status]}`}
-    />
-  );
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 export function CopilotTools() {
   const {
-    blocks,
-    setBlocks,
-    addBlock,
-    updateBlock,
-    removeBlock,
-    tasks,
-    setTasks,
-    updateTask,
-    syllabus,
-    setSyllabus,
-    agentActivity,
-    setAgentActivity,
+    syllabi,
+    createSyllabus,
+    addChapter,
+    addLesson,
+    updateLessonContent,
+    removeChapter,
+    removeLesson,
+    setRenderError,
+    getActiveSyllabus,
   } = useSyllabusStore();
 
-  // ── Readable context ────────────────────────────────────────────────────────
   useCopilotReadable({
-    description: "The current syllabus blocks that the user is building",
-    value: blocks,
-  });
-
-  useCopilotReadable({
-    description: "The current agent task plan and their statuses",
-    value: tasks,
+    description: "All syllabi currently in the store, including their chapters and lessons",
+    value: syllabi,
   });
 
   useCopilotReadable({
-    description: "The current full syllabus markdown text",
-    value: syllabus,
+    description: "The currently active syllabus (chapters + lessons)",
+    value: getActiveSyllabus(),
   });
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
-
   useCopilotAction({
-    name: "plan_tasks",
-    description: "Create a plan with a list of task descriptions",
+    name: "create_syllabus",
+    description: "Create a new syllabus with a unique id, title, subject and optional description",
     parameters: [
-      {
-        name: "tasks",
-        type: "object[]",
-        description: "List of task objects with id, description, and status",
-        attributes: [
-          { name: "id", type: "number", description: "Task id" },
-          { name: "description", type: "string", description: "Task description" },
-          { name: "status", type: "string", description: "pending | in_progress | done" },
-        ],
-      },
+      { name: "id",          type: "string", description: "Unique syllabus id" },
+      { name: "title",       type: "string", description: "Syllabus title" },
+      { name: "subject",     type: "string", description: "Subject area" },
+      { name: "description", type: "string", description: "Optional description", required: false },
     ],
-    handler: ({ tasks: newTasks }) => {
-      setTasks(newTasks as any);
+    handler: ({ id, title, subject, description }) => {
+      createSyllabus(
+        id as string,
+        title as string,
+        subject as string,
+        description as string | undefined,
+      );
     },
   });
 
   useCopilotAction({
-    name: "update_plan_task",
-    description: "Update the status of a plan task",
+    name: "add_chapter",
+    description: "Add a chapter to an existing syllabus",
     parameters: [
-      { name: "task_id", type: "number", description: "Task id to update" },
-      { name: "status", type: "string", description: "New status: pending | in_progress | done" },
+      { name: "syllabusId",  type: "string", description: "Parent syllabus id" },
+      { name: "chapterId",   type: "string", description: "Unique chapter id" },
+      { name: "title",       type: "string", description: "Chapter title" },
+      { name: "description", type: "string", description: "Optional description", required: false },
     ],
-    handler: ({ task_id, status }) => {
-      updateTask(task_id as number, status as "pending" | "in_progress" | "done");
+    handler: ({ syllabusId, chapterId, title, description }) => {
+      addChapter(
+        syllabusId as string,
+        chapterId as string,
+        title as string,
+        description as string | undefined,
+      );
     },
   });
 
   useCopilotAction({
-    name: "set_syllabus_blocks",
-    description: "Replace the entire list of syllabus blocks shown to the user",
+    name: "add_lesson",
+    description: "Add a lesson to a chapter with optional BlockNote content",
     parameters: [
-      {
-        name: "blocks",
-        type: "object[]",
-        description: "Array of syllabus block objects",
-        attributes: [
-          { name: "id", type: "string", description: "Unique block id" },
-          { name: "type", type: "string", description: "Block type: week | module | objective | resource | assessment" },
-          { name: "title", type: "string", description: "Block title" },
-          { name: "content", type: "string", description: "Block content or description" },
-          { name: "order", type: "number", description: "Display order" },
-        ],
-      },
+      { name: "chapterId", type: "string",   description: "Parent chapter id" },
+      { name: "lessonId",  type: "string",   description: "Unique lesson id" },
+      { name: "title",     type: "string",   description: "Lesson title" },
+      { name: "content",   type: "object[]", description: "Initial BlockNote content blocks", required: false },
     ],
-    handler: ({ blocks: newBlocks }) => {
-      setBlocks(newBlocks as Block[]);
+    handler: ({ chapterId, lessonId, title, content }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      addLesson(chapterId as string, lessonId as string, title as string, (content ?? []) as any);
     },
   });
 
   useCopilotAction({
-    name: "add_syllabus_block",
-    description: "Add a single new block to the syllabus",
+    name: "update_lesson_content",
+    description: "Replace the BlockNote content of an existing lesson",
     parameters: [
-      { name: "id", type: "string", description: "Unique block id" },
-      { name: "type", type: "string", description: "Block type" },
-      { name: "title", type: "string", description: "Block title" },
-      { name: "content", type: "string", description: "Block content" },
-      { name: "order", type: "number", description: "Display order" },
+      { name: "lessonId", type: "string",   description: "Lesson id to update" },
+      { name: "content",  type: "object[]", description: "New BlockNote content blocks" },
     ],
-    handler: (block) => {
-      addBlock(block as Block);
+    handler: ({ lessonId, content }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      updateLessonContent(lessonId as string, (content ?? []) as any);
     },
   });
 
   useCopilotAction({
-    name: "update_syllabus_block",
-    description: "Update fields on an existing syllabus block",
+    name: "remove_chapter",
+    description: "Remove a chapter and all its lessons",
     parameters: [
-      { name: "id", type: "string", description: "Block id to update" },
-      { name: "title", type: "string", description: "New title", required: false },
-      { name: "content", type: "string", description: "New content", required: false },
-      { name: "type", type: "string", description: "New type", required: false },
+      { name: "chapterId", type: "string", description: "Chapter id to remove" },
     ],
-    handler: ({ id, ...updates }) => {
-      updateBlock(id as string, updates as Partial<Block>);
+    handler: ({ chapterId }) => {
+      removeChapter(chapterId as string);
     },
   });
 
   useCopilotAction({
-    name: "remove_syllabus_block",
-    description: "Remove a syllabus block by id",
+    name: "remove_lesson",
+    description: "Remove a lesson by id",
     parameters: [
-      { name: "id", type: "string", description: "Block id to remove" },
+      { name: "lessonId", type: "string", description: "Lesson id to remove" },
     ],
-    handler: ({ id }) => {
-      removeBlock(id as string);
+    handler: ({ lessonId }) => {
+      removeLesson(lessonId as string);
     },
   });
 
   useCopilotAction({
-    name: "set_syllabus_text",
-    description: "Set the full rendered syllabus markdown text",
+    name: "report_render_error",
+    description: "Store a render error for a lesson (pass null error to clear it)",
     parameters: [
-      { name: "text", type: "string", description: "Full syllabus markdown" },
+      { name: "lessonId", type: "string", description: "Lesson id" },
+      { name: "error",    type: "string", description: "Error message, or null to clear" },
     ],
-    handler: ({ text }) => {
-      setSyllabus(text as string);
+    handler: ({ lessonId, error }) => {
+      setRenderError(lessonId as string, (error as string | null) ?? null);
     },
   });
 
-  useCopilotAction({
-    name: "set_agent_activity",
-    description: "Update the agent activity log shown in the UI",
-    parameters: [
-      { name: "activity", type: "string", description: "Current agent activity description" },
-    ],
-    handler: ({ activity }) => {
-      setAgentActivity(activity as string);
-    },
-  });
-
-  // ── Render: task panel only (blocks shown in SyllabusViewer) ────────────────
-  if (tasks.length === 0 && !agentActivity) return null;
-
-  return (
-    <div className="fixed bottom-4 right-4 z-50 w-80 space-y-2">
-      {agentActivity && (
-        <AgentActivityPanel activity={agentActivity} />
-      )}
-
-      {tasks.length > 0 && (
-        <Card className="bg-[#111] border border-white/10 shadow-xl">
-          <CardHeader className="pb-2 pt-3 px-4">
-            <CardTitle className="text-xs font-semibold text-white/50 uppercase tracking-wider">
-              Agent Plan
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-3 space-y-1.5">
-            {tasks.map((task) => (
-              <div key={task.id} className="flex items-center gap-2 text-sm">
-                <StatusDot status={task.status} />
-                <span
-                  className={`flex-1 ${
-                    task.status === "done" ? "line-through text-white/30" : "text-white/80"
-                  }`}
-                >
-                  {task.description}
-                </span>
-                <Badge
-                  variant="outline"
-                  className="text-[10px] px-1.5 py-0 border-white/10 text-white/40"
-                >
-                  {task.status}
-                </Badge>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
+  // AgentActivityPanel is self-contained: it uses useCoAgentStateRender
+  // internally and renders inside CopilotKit's overlay (returns null from DOM).
+  return <AgentActivityPanel />;
 }
