@@ -1,56 +1,126 @@
-"""Tool definitions + async executors aligned with AgentState."""
-from __future__ import annotations
+"""
+Python-side agent tools: plan_tasks, search_web, scrape_website
+These are bound to the LLM in nodes.py alongside the frontend (CopilotKit) tools.
+"""
+import os
 import json
+import httpx
 from langchain_core.tools import tool
-from langchain_community.tools.tavily_search import TavilySearchResults
 
-_tavily = TavilySearchResults(max_results=4)
-
-
-@tool
-def set_plan(tasks: list[dict]) -> str:
-    """Set the agent execution plan. tasks is a list of {id, task, status} dicts."""
-    return json.dumps(tasks)
+SERPER_SEARCH_URL = "https://google.serper.dev/search"
+SERPER_SCRAPE_URL = "https://scrape.serper.dev"
 
 
-@tool
-def update_activity(activity: str) -> str:
-    """Update the current activity description shown to the user."""
-    return activity
+def _headers() -> dict:
+    return {
+        "X-API-KEY": os.getenv("SERPER_API_KEY", ""),
+        "Content-Type": "application/json",
+    }
 
 
 @tool
-def search_web(query: str) -> str:
-    """Search the web for educational content about a topic."""
-    return ""
+def plan_tasks(tasks: list) -> str:
+    """
+    Create a step-by-step plan before building a syllabus.
+    ALWAYS call this first for any request involving 2+ chapters.
+    tasks: list of concrete steps, e.g.:
+      ["Search for Python basics vocabulary",
+       "Create syllabus",
+       "Add chapter: Introduction",
+       "Add lesson: What is Python",
+       ...]
+    Returns the plan as a JSON array so the frontend can render it.
+    """
+    plan = [{"id": i, "task": t, "status": "pending"} for i, t in enumerate(tasks)]
+    return json.dumps(plan)
 
 
 @tool
-def mark_finished(finished: bool = True) -> str:
-    """Mark the agent task as finished."""
-    return str(finished)
+def search_web(
+    query: str,
+    country: str = "us",
+    time_period: str = "",
+    num_results: int = 6,
+) -> str:
+    """
+    Search the web using Serper API. Use this BEFORE writing any lesson to:
+    - Verify correct terminology and vocabulary for the subject
+    - Find standard curriculum structures for the field
+    - Get definitions, key concepts, and real-world examples
+    - Research best practices and current standards
 
+    country: ISO 2-letter country code (us, fr, gb, de, jp, ma, ...)
+    time_period: '' (any time), 'd' (past day), 'w' (past week), 'm' (past month), 'y' (past year)
+    num_results: number of results to return (1-10)
+    """
+    payload: dict = {
+        "q": query,
+        "gl": country,
+        "num": min(max(num_results, 1), 10),
+        "hl": "en",
+    }
+    if time_period:
+        payload["tbs"] = f"qdr:{time_period}"
 
-def get_tools():
-    return [set_plan, update_activity, search_web, mark_finished]
+    try:
+        r = httpx.post(SERPER_SEARCH_URL, json=payload, headers=_headers(), timeout=15)
+        data = r.json()
 
+        results = [
+            {
+                "title": item.get("title", ""),
+                "url": item.get("link", ""),
+                "snippet": item.get("snippet", ""),
+                "position": item.get("position", 0),
+            }
+            for item in data.get("organic", [])
+        ]
 
-async def execute_tool(name: str, args: dict, config: dict) -> dict:
-    """Execute a tool by name and return a state-patch dict."""
-    if name == "set_plan":
-        return {"plan": args.get("tasks", [])}
-
-    if name == "update_activity":
-        return {"current_activity": args.get("activity", "")}
-
-    if name == "mark_finished":
-        return {"finished": args.get("finished", True)}
-
-    if name == "search_web":
-        results = await _tavily.ainvoke(args["query"])
-        return {
-            "search_results": {"query": args["query"], "results": results},
-            "current_activity": f"Searched: {args['query']}",
+        knowledge = data.get("knowledgeGraph", {})
+        output: dict = {
+            "query": query,
+            "country": country,
+            "total": len(results),
+            "results": results,
         }
+        if knowledge:
+            output["knowledge_panel"] = {
+                "title": knowledge.get("title", ""),
+                "description": knowledge.get("description", ""),
+                "attributes": knowledge.get("attributes", {}),
+            }
+        return json.dumps(output)
+    except Exception as exc:
+        return json.dumps({"error": str(exc), "query": query, "results": []})
 
-    return {}
+
+@tool
+def scrape_website(url: str) -> str:
+    """
+    Scrape a specific webpage and return its full content as structured markdown.
+    Use this when a search result looks authoritative and you want the complete content.
+    Best targets: Wikipedia articles, educational platforms, documentation pages,
+    official curriculum guides.
+    The returned markdown can be used directly to write accurate lesson content.
+    """
+    try:
+        r = httpx.post(
+            SERPER_SCRAPE_URL,
+            json={"url": url, "includeMarkdown": True},
+            headers=_headers(),
+            timeout=20,
+        )
+        data = r.json()
+        content = data.get("markdown") or data.get("text") or ""
+        if len(content) > 8000:
+            content = content[:8000] + "\n\n[... content truncated for length ...]"
+        return json.dumps({
+            "url": url,
+            "title": data.get("title", url),
+            "content": content,
+        })
+    except Exception as exc:
+        return json.dumps({"error": str(exc), "url": url, "content": ""})
+
+
+PYTHON_TOOLS = [plan_tasks, search_web, scrape_website]
