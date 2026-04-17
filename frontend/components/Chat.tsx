@@ -32,7 +32,8 @@ export function Chat() {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const { appendMessage, messages, isLoading } = useCopilotChat();
+  // visibleMessages is the correct property on UseCopilotChatReturn (not `messages`)
+  const { appendMessage, visibleMessages, isLoading } = useCopilotChat();
   const { state: agentState } = useCoAgent<AgentState>({
     name: "syllabus_agent",
     initialState: EMPTY_STATE,
@@ -42,7 +43,7 @@ export function Chat() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [visibleMessages]);
 
   const handleSend = () => {
     if (!input.trim() || isLoading) return;
@@ -78,14 +79,14 @@ export function Chat() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.length === 0 && (
+        {visibleMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center text-white/30 gap-3">
             <BotMessageSquare className="w-12 h-12" />
             <p className="text-sm">Ask the syllabus AI anything.<br />It can search the web and build full course outlines.</p>
           </div>
         )}
 
-        {messages.map((msg, i) => {
+        {visibleMessages.map((msg, i) => {
           const isUser = msg instanceof TextMessage && msg.role === Role.User;
           const content = msg instanceof TextMessage ? msg.content : null;
           if (!content) return null;
@@ -139,3 +140,6 @@ export function Chat() {
     </div>
   );
 }
+
+// Alias used by SyllabusViewerClient
+export { Chat as CustomChat };
