@@ -4,17 +4,25 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useSyllabusStore } from "@/store/syllabusStore";
 import { FileTree } from "@/components/FileTree";
 import { BlockNoteEditor, EmptyEditorState } from "@/components/BlockNoteEditor";
-import { CustomChat } from "@/components/Chat";
+import { CopilotChat } from "@copilotkit/react-ui";
 
 /**
  * 3-panel resizable layout:
  *
- *  ┌──────────────┬──────────────────────────────┬──────────────┐
- *  │  FileTree    │      BlockNote editor         │  Chat        │
- *  │  (left)      │      (center, biggest)        │  (right)     │
- *  │  min 12%     │      min 35%                  │  min 20%     │
- *  │  default 17% │      flex                     │  default 28% │
- *  └──────────────┴──────────────────────────────┴──────────────┘
+ *  ┌──────────────┬──────────────────────────────┬───────────────┐
+ *  │  FileTree     │      BlockNote editor         │  CopilotChat │
+ *  │  (left)      │      (center, biggest)       │  (right)     │
+ *  │  min 12%     │      min 35%                 │  min 20%     │
+ *  │  default 17% │      flex                    │  default 28% │
+ *  └──────────────┴───────────────────────────────┴───────────────┘
+ *
+ * Using CopilotChat (from @copilotkit/react-ui) instead of the custom
+ * headless Chat component so that:
+ *  - All message types are rendered (TextMessage, ActionExecutionMessage,
+ *    ResultMessage, and useCoAgentStateRender results from AgentActivityPanel)
+ *  - Tool-call progress is shown inline in the message list
+ *  - AG-UI streaming state renders (plan, search results, scrape) appear
+ *    naturally in the conversation thread
  */
 export default function SyllabusViewerClient() {
   const { getActiveLesson } = useSyllabusStore();
@@ -59,7 +67,7 @@ export default function SyllabusViewerClient() {
 
         <ResizeHandle />
 
-        {/* Right: Chat */}
+        {/* Right: CopilotChat — handles all message types natively */}
         <Panel
           id="chat"
           order={3}
@@ -68,7 +76,16 @@ export default function SyllabusViewerClient() {
           maxSize={45}
           className="flex flex-col overflow-hidden border-l border-[var(--border)]"
         >
-          <CustomChat />
+          <CopilotChat
+            className="h-full"
+            labels={{
+              title: "Syllabus AI",
+              placeholder: "Describe the course you want to plan...",
+              stopGenerating: "Stop",
+              regenerateResponse: "Regenerate",
+            }}
+            instructions="You are a syllabus-building AI. Help the user design course outlines, chapters, and lessons. Use the available tools to create and update syllabi."
+          />
         </Panel>
 
       </PanelGroup>
