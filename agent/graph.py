@@ -5,10 +5,9 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from .state import AgentState
 from .nodes import chat_node, search_node, scraper_node
 
-
-def _build_search_subgraph() -> StateGraph::
+def _build_search_subgraph() -> StateGraph:
     """
-    Compiled sub-graph:  search_node → scraper_node → (exit to parent).
+    Compiled sub-graph:  search_node — scraper_node → (exit to parent).
 
     After scraper_node finishes, control returns to 'chat_node' in the
     parent graph via the edge  search_subgraph → chat_node.
@@ -21,16 +20,15 @@ def _build_search_subgraph() -> StateGraph::
     sg.set_finish_point("scraper_node")
     return sg.compile()
 
-
 def build_graph(checkpointer: BaseCheckpointSaver):
     """
     Main graph topology:
 
         [entry] chat_node
-                 │
-                 ┌─ plan tool calls?      "�� chat_node  (loop, state updated inline)
-                 ┌─ pending search step? → search_subgraph
-                 ├─ frontend tool calls? → END
+                 ⁂
+                 ┌- plan tool calls?      → chat_node  (loop, state updated inline)
+                  ┌- pending search step? → search_subgraph
+                  ┎- frontend tool calls? → END
                     text only?           → END
 
         search_subgraph (search_node → scraper_node)
