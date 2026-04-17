@@ -1,5 +1,5 @@
 """
-chat_node â binds Python tools + CopilotKit frontend tools to the LLM.
+chat_node — binds Python tools + CopilotKit frontend tools to the LLM.
 
 IMPORTANT: parallel_tool_calls=False is required when mixing frontend and
 Python tools. Without it the LLM may emit both types in one AIMessage;
@@ -45,11 +45,8 @@ async def _maybe_summarize(messages: list, llm) -> list:
     summary_req = HumanMessage(
         content=(
             "Summarise the conversation so far in <= 120 words, preserving key"
-            " decisions, tool results, and open questions:
-
-"
-            + "
-".join(lines)
+            " decisions, tool results, and open questions:\n\n"
+            + "\n".join(lines)
         )
     )
     summary_msg = await llm.ainvoke([summary_req])
@@ -58,123 +55,63 @@ async def _maybe_summarize(messages: list, llm) -> list:
         if isinstance(summary_msg.content, str)
         else json.dumps(summary_msg.content)
     )
-    return [SystemMessage(content=f"[Conversation summary]
-{summary_text}")] + recent
+    return [SystemMessage(content=f"[Conversation summary]\n{summary_text}")] + recent
 
 
 def _build_system_prompt(state: AgentState) -> str:
     """Build the full system prompt with context injection."""
     base = (
-        "You are an expert course-creation assistant.
-"
-        "Your job is to help users build rich, well-structured syllabuses.
-
-"
-        "## How you work
-"
-        "1. When the user asks you to create a syllabus, first call `set_plan` with all steps.
-"
-        "2. Execute each step in order. For search steps, call `web_search` / `scrape_page`.
-"
-        "3. Use the frontend tools to build the syllabus structure and content.
-"
-        "4. Call `mark_step_done` after completing each step.
-
-"
-        "## Tools available
-"
-        "### Frontend tools (dispatched automatically by CopilotKit)
-"
-        "- create_syllabus(id, title, subject, description?)
-"
-        "- add_chapter(syllabusId, chapterId, title, description?)
-"
-        "- add_lesson(chapterId, lessonId, title, content)
-"
-        "- update_lesson_content(lessonId, content)
-"
-        "- remove_chapter(chapterId)
-"
-        "- remove_lesson(lessonId)
-"
-        "- report_render_error(lessonId, error)
-
-"
-        "### Server-side tools
-"
-        "- set_plan(steps) -> create execution plan
-"
-        "- mark_step_done(step_id) -> mark step complete
-"
-        "- web_search(query) -> search the web
-"
-        "- scrape_page(url) -> scrape a page
-
-"
-        "## BlockNote content format
-"
-        "Every lesson's `content` field must be a valid BlockNote JSON array.
-"
-        "Each block:
-"
-        "  { type, props?, content?, children? }
-
-"
-        "Supported block types and their props:
-"
-        "  paragraph          - props: textAlignment
-"
-        "  heading            - props: level (1|2|3), textAlignment
-"
-        "  bulletListItem     - props: textAlignment
-"
-        "  numberedListItem   - props: textAlignment
-"
-        "  checkListItem      - props: checked (bool), textAlignment
-"
-        "  table              - content: tableContent (see below)
-"
-        "  image              - props: url, caption, textAlignment
-"
-        "  video              - props: url, caption, textAlignment
-"
-        "  audio              - props: url, caption
-"
-        "  file               - props: url, name, caption
-"
-        "  codeBlock          - props: language
-
-"
-        "Inline content array (used in most block types):
-"
-        "  { type: 'text', text: '..', styles?: { bold, italic, underline,
-"
-        "    strikethrough, code, textColor, backgroundColor } }
-"
-        "  { type: 'link', href: '..', content: [text nodes] }
-
-"
-        "Table format:
-"
-        "  content: { type: 'tableContent', rows: [
-"
-        "    { cells: [ [inlineContent], ... ] }
-"
-        "  ]}
-
-"
-        "RULES:
-"
-        "1. NEVER output plain text outside a block.
-"
-        "2. Always use inline content arrays for text-bearing blocks.
-"
-        "3. Use heading level 2 for section titles, level 3 for sub-sections.
-"
-        "4. Keep lessons focused; split large topics into multiple lessons.
-"
-        "5. Do NOT wrap the JSON in markdown fences.
-"
+        "You are an expert course-creation assistant.\n"
+        "Your job is to help users build rich, well-structured syllabuses.\n\n"
+        "## How you work\n"
+        "1. When the user asks you to create a syllabus, first call `set_plan` with all steps.\n"
+        "2. Execute each step in order. For search steps, call `web_search` / `scrape_page`.\n"
+        "3. Use the frontend tools to build the syllabus structure and content.\n"
+        "4. Call `mark_step_done` after completing each step.\n\n"
+        "## Tools available\n"
+        "### Frontend tools (dispatched automatically by CopilotKit)\n"
+        "- create_syllabus(id, title, subject, description?)\n"
+        "- add_chapter(syllabusId, chapterId, title, description?)\n"
+        "- add_lesson(chapterId, lessonId, title, content)\n"
+        "- update_lesson_content(lessonId, content)\n"
+        "- remove_chapter(chapterId)\n"
+        "- remove_lesson(lessonId)\n"
+        "- report_render_error(lessonId, error)\n\n"
+        "### Server-side tools\n"
+        "- set_plan(steps) -> create execution plan\n"
+        "- mark_step_done(step_id) -> mark step complete\n"
+        "- web_search(query) -> search the web\n"
+        "- scrape_page(url) -> scrape a page\n\n"
+        "## BlockNote content format\n"
+        "Every lesson's `content` field must be a valid BlockNote JSON array.\n"
+        "Each block:\n"
+        "  { type, props?, content?, children? }\n\n"
+        "Supported block types and their props:\n"
+        "  paragraph          - props: textAlignment\n"
+        "  heading            - props: level (1|2|3), textAlignment\n"
+        "  bulletListItem     - props: textAlignment\n"
+        "  numberedListItem   - props: textAlignment\n"
+        "  checkListItem      - props: checked (bool), textAlignment\n"
+        "  table              - content: tableContent (see below)\n"
+        "  image              - props: url, caption, textAlignment\n"
+        "  video              - props: url, caption, textAlignment\n"
+        "  audio              - props: url, caption\n"
+        "  file               - props: url, name, caption\n"
+        "  codeBlock          - props: language\n\n"
+        "Inline content array (used in most block types):\n"
+        "  { type: 'text', text: '..', styles?: { bold, italic, underline,\n"
+        "    strikethrough, code, textColor, backgroundColor } }\n"
+        "  { type: 'link', href: '..', content: [text nodes] }\n\n"
+        "Table format:\n"
+        "  content: { type: 'tableContent', rows: [\n"
+        "    { cells: [ [inlineContent], ... ] }\n"
+        "  ]}\n\n"
+        "RULES:\n"
+        "1. NEVER output plain text outside a block.\n"
+        "2. Always use inline content arrays for text-bearing blocks.\n"
+        "3. Use heading level 2 for section titles, level 3 for sub-sections.\n"
+        "4. Keep lessons focused; split large topics into multiple lessons.\n"
+        "5. Do NOT wrap the JSON in markdown fences.\n"
     )
 
     ctx_entries: list = state.get("copilotkit", {}).get("context", [])
@@ -190,36 +127,32 @@ def _build_system_prompt(state: AgentState) -> str:
                 value_str = str(raw)
             ctx_lines.append(f"### {desc}")
             ctx_lines.append(value_str)
-        base += "
-" + "
-".join(ctx_lines)
+        base += "\n" + "\n".join(ctx_lines)
 
     plan = state.get("plan", [])
     if plan:
-        plan_lines = ["
-## Current plan"]
+        plan_lines = ["\n## Current plan"]
         for step in plan:
-            status_icon = {"pending": "waiting", "in_progress": "active", "searching": "searching", "done": "done"}.get(step.get("status", ""), "?")
-            plan_lines.append(f"  [{status_icon}] Step {step.get('id', '?')}: [{step.get('type', '?')}] {step.get('title', '')}")
-        base += "
-".join(plan_lines)
+            status_icon = {
+                "pending": "waiting",
+                "in_progress": "active",
+                "searching": "searching",
+                "done": "done",
+            }.get(step.get("status", ""), "?")
+            plan_lines.append(
+                f"  [{status_icon}] Step {step.get('id', '?')}: "
+                f"[{step.get('type', '?')}] {step.get('title', '')}"
+            )
+        base += "\n".join(plan_lines)
 
     scraped = state.get("scraped_pages", [])
     if scraped:
-        base += "
-
-## Research results (scraped pages)
-"
+        base += "\n\n## Research results (scraped pages)\n"
         for page in scraped[-6:]:
-            base += f"### {page.get('title', page.get('url', ''))}
-"
-            base += f"URL: {page.get('url', '')}
-"
+            base += f"### {page.get('title', page.get('url', ''))}\n"
+            base += f"URL: {page.get('url', '')}\n"
             md = page.get("markdown", "")
-            base += md[:3000] + ("
-[truncated]" if len(md) > 3000 else "") + "
-
-"
+            base += md[:3000] + ("[truncated]" if len(md) > 3000 else "") + "\n\n"
 
     return base
 
@@ -381,7 +314,10 @@ def route_after_chat(state: AgentState) -> str:
     last = messages[-1]
     tool_calls = getattr(last, "tool_calls", None) or []
 
-    python_non_plan = [tc for tc in tool_calls if tc["name"] in PYTHON_TOOL_NAMES and tc["name"] not in PLAN_TOOL_NAMES]
+    python_non_plan = [
+        tc for tc in tool_calls
+        if tc["name"] in PYTHON_TOOL_NAMES and tc["name"] not in PLAN_TOOL_NAMES
+    ]
     if python_non_plan:
         return "tools"
 
@@ -389,7 +325,11 @@ def route_after_chat(state: AgentState) -> str:
     current_index = state.get("currentStepIndex", 0)
     if 0 <= current_index < len(plan):
         step = plan[current_index]
-        if step.get("type") == "search" and step.get("status") == "in_progress" and step.get("queries"):
+        if (
+            step.get("type") == "search"
+            and step.get("status") == "in_progress"
+            and step.get("queries")
+        ):
             return "search_subgraph"
 
     plan_calls = [tc for tc in tool_calls if tc["name"] in PLAN_TOOL_NAMES]
