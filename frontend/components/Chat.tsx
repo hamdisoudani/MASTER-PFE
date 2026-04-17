@@ -79,14 +79,14 @@ export function Chat() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {visibleMessages.length === 0 && (
+        {(visibleMessages ?? []).length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center text-white/30 gap-3">
             <BotMessageSquare className="w-12 h-12" />
             <p className="text-sm">Ask the syllabus AI anything.<br />It can search the web and build full course outlines.</p>
           </div>
         )}
 
-        {visibleMessages.map((msg, i) => {
+        {(visibleMessages ?? []).map((msg, i) => {
           const isUser = msg instanceof TextMessage && msg.role === Role.User;
           const content = msg instanceof TextMessage ? msg.content : null;
           if (!content) return null;
