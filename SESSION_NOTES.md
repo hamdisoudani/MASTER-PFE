@@ -37,6 +37,55 @@ Do **not** replace this with a `/api/copilotkit` proxy route — that was tried 
 
 ---
 
+## 🔔 RULE 4 — Always build-test BEFORE pushing to GitHub
+
+**NEVER push code changes without running a successful build first.**
+
+The local BU sandbox has ~1.6GB disk and cannot run `npm install` + `next build` for this project. Instead, use **E2B sandbox via Composio** for all heavy build/test operations.
+
+### E2B Build-Test Workflow
+
+1. **Create sandbox** — `E2B_POST_SANDBOXES` with template `desktop` (powerful sandbox with plenty of disk/RAM)
+2. **Connect** — `E2B_CONNECT_SANDBOX` with the returned `sandbox_id`
+3. **Clone & build** — run commands via `composio_workbench`:
+   ```python
+   run_composio_tool("E2B_POST_SANDBOXES", {"template": "desktop"})
+   # connect, then use COMPOSIO_REMOTE_WORKBENCH to run:
+   # git clone https://github.com/hamdisoudani/MASTER-PFE.git
+   # cd MASTER-PFE/frontend && npm install && npm run build
+   ```
+4. **Only push if build succeeds** — if build fails, fix the code and re-test before pushing
+5. **Tear down** — `E2B_DELETE_SANDBOXES` when done to avoid costs
+
+### Composio E2B Tools Reference
+
+| Tool | Purpose |
+|------|---------|
+| `E2B_POST_SANDBOXES` | Create sandbox (use `template: "desktop"`) |
+| `E2B_CONNECT_SANDBOX` | Connect to sandbox by ID |
+| `E2B_POST_SANDBOXES_TIMEOUT` | Extend sandbox TTL |
+| `E2B_REFRESH_SANDBOX` | Keep sandbox alive |
+| `E2B_GET_SANDBOXES_LOGS` | Debug build failures |
+| `E2B_DELETE_SANDBOXES` | Clean up after done |
+| `COMPOSIO_REMOTE_WORKBENCH` | Execute commands in connected sandbox |
+
+### Why not build locally?
+- BU sandbox has ~1.6GB disk — `node_modules` alone is ~350MB, build artifacts add more
+- `next build` frequently times out or runs out of space
+- E2B desktop template provides a full environment with ample resources
+
+---
+
+## 🔔 RULE 5 — Use E2B for any heavy operation
+
+Not just builds — use E2B sandbox for:
+- Running full test suites
+- Installing large dependency trees
+- Any operation that needs >1GB disk or significant RAM
+- TypeScript compilation checks (`npx tsc --noEmit`)
+
+---
+
 ## Architecture
 
 ```
@@ -162,4 +211,20 @@ class-variance-authority, clsx, tailwind-merge, lucide-react
 - **`@copilotkit/react-core/v2` CSS** — the `/v2` subpath ships a full Tailwind v4 stylesheet that Next.js PostCSS cannot handle. Suppress with `IgnorePlugin`; add CopilotKit styles manually if needed.
 - **CopilotKit context entries are Pydantic objects** — always use `entry.description` / `entry.value`, not dict `.get()`.
 
-*Last updated: 2026-04-16 — agent fully working end-to-end.*
+---
+
+## Session — 2026-04-17 (build fix)
+
+### Issues fixed this session
+
+| # | Error | Root cause | Fix | Commit |
+|---|-------|------------|-----|--------|
+| 1 | Frontend build: `AgentActivityPanel` missing required props | `CopilotTools.tsx` renders `<AgentActivityPanel />` with no props but all 4 props were required | Made all 4 props optional with defaults (`[]`, `0`, `"idle"`, `""`) | `785b8b9` |
+| 2 | Agent: `openai.AuthenticationError` — missing authorization header | `nodes.py` used `NVIDIA_API_KEY` env var but Railway uses `LLM_API_KEY` per `.env.example` | Changed to `os.environ.get("LLM_API_KEY")`, also made `LLM_BASE_URL` and `LLM_MODEL` configurable | `b53cf3e` |
+
+### Key learnings
+- **Build-test before push** — the AgentActivityPanel fix was correct but wasn't build-tested locally due to disk constraints. Use E2B next time.
+- **Env var naming consistency** — always check `.env.example` for the canonical env var names before hardcoding them in source files.
+- **⚠️ Potential issue:** `agent/search.py` has `SERPERE_API_KEY` (typo) — should likely be `SERPER_API_KEY`. Needs verification.
+
+*Last updated: 2026-04-17*
