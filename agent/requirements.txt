@@ -1,9 +1,11 @@
 fastapi
 uvicorn
 langchain-openai
+langchain-community
 langgraph
 copilotkit
 httpx
 langchain-core
 langgraph-checkpoint-postgres
 psycopg[binary,pool]
+tavily-python
