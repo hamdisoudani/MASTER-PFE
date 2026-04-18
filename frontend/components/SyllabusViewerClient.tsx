@@ -5,25 +5,8 @@ import { useSyllabusStore } from "@/store/syllabusStore";
 import { FileTree } from "@/components/FileTree";
 import { BlockNoteEditor, EmptyEditorState } from "@/components/BlockNoteEditor";
 import { CopilotChat } from "@copilotkit/react-ui";
+import { AgentActivityPanel } from "@/components/AgentActivityPanel";
 
-/**
- * 3-panel resizable layout:
- *
- *  ┌──────────────┬──────────────────────────────┬───────────────┐
- *  │  FileTree     │      BlockNote editor         │  CopilotChat │
- *  │  (left)      │      (center, biggest)       │  (right)     │
- *  │  min 12%     │      min 35%                 │  min 20%     │
- *  │  default 17% │      flex                    │  default 28% │
- *  └──────────────┴───────────────────────────────┴───────────────┘
- *
- * Using CopilotChat (from @copilotkit/react-ui) instead of the custom
- * headless Chat component so that:
- *  - All message types are rendered (TextMessage, ActionExecutionMessage,
- *    ResultMessage, and useCoAgentStateRender results from AgentActivityPanel)
- *  - Tool-call progress is shown inline in the message list
- *  - AG-UI streaming state renders (plan, search results, scrape) appear
- *    naturally in the conversation thread
- */
 export interface PlanStep {
   description: string;
   type: "search" | "task";
@@ -39,7 +22,6 @@ export default function SyllabusViewerClient() {
     <div className="h-screen w-full overflow-hidden flex flex-col">
       <PanelGroup direction="horizontal" className="flex-1 min-h-0">
 
-        {/* Left: file explorer */}
         <Panel
           id="file-tree"
           order={1}
@@ -53,7 +35,6 @@ export default function SyllabusViewerClient() {
 
         <ResizeHandle />
 
-        {/* Center: BlockNote editor */}
         <Panel
           id="editor"
           order={2}
@@ -74,14 +55,18 @@ export default function SyllabusViewerClient() {
 
         <ResizeHandle />
 
-        {/* Right: CopilotChat — handles all message types natively */}
+        {/*
+          Right: CopilotChat with the AgentActivityPanel floating above
+          the prompt input. The Panel is position:relative so the panel's
+          absolute positioning docks it to the bottom of the chat column.
+        */}
         <Panel
           id="chat"
           order={3}
           defaultSize={28}
           minSize={20}
           maxSize={45}
-          className="flex flex-col overflow-hidden border-l border-[var(--border)]"
+          className="relative flex flex-col overflow-hidden border-l border-[var(--border)]"
         >
           <CopilotChat
             className="h-full"
@@ -93,6 +78,7 @@ export default function SyllabusViewerClient() {
             }}
             instructions="You are a syllabus-building AI. Help the user design course outlines, chapters, and lessons. Use the available tools to create and update syllabi."
           />
+          <AgentActivityPanel />
         </Panel>
 
       </PanelGroup>

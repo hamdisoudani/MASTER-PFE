@@ -3,21 +3,48 @@
 import React from "react";
 import { useCopilotAction, useCopilotReadable } from "@copilotkit/react-core";
 import { useSyllabusStore } from "@/store/syllabusStore";
-import { AgentActivityPanel } from "@/components/AgentActivityPanel";
 import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 
 function ToolCallCard({ title, status, args, error }: { title: string; status: "inProgress" | "executing" | "complete" | string; args?: Record<string, unknown>; error?: string | null; }) {
   const isRunning = status === "inProgress" || status === "executing";
   const isDone = status === "complete";
   return (
-    <div className="my-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs">
+    <div
+      className="my-2 rounded-[var(--radius)] px-3 py-2 text-xs"
+      style={{
+        fontFamily: "var(--font-sans)",
+        background: "color-mix(in srgb, var(--card) 85%, transparent)",
+        border: "1px solid var(--border)",
+      }}
+    >
       <div className="flex items-center gap-2">
-        {error ? (<AlertTriangle className="w-3.5 h-3.5 text-red-400" />) : isDone ? (<CheckCircle2 className="w-3.5 h-3.5 text-green-400" />) : (<Loader2 className={["w-3.5 h-3.5 text-indigo-300", isRunning ? "animate-spin" : ""].join(" ")} />)}
-        <span className="font-mono text-[11px] text-white/85">{title}</span>
-        <span className={["ml-auto text-[9px] px-1.5 py-0.5 rounded uppercase tracking-wider", error ? "bg-red-500/15 text-red-300" : isDone ? "bg-green-500/15 text-green-300" : "bg-indigo-500/15 text-indigo-300"].join(" ")}>{error ? "error" : isDone ? "done" : "running"}</span>
+        {error ? (
+          <AlertTriangle className="w-3.5 h-3.5" style={{ color: "var(--destructive)" }} />
+        ) : isDone ? (
+          <CheckCircle2 className="w-3.5 h-3.5" style={{ color: "var(--secondary)" }} />
+        ) : (
+          <Loader2 className={["w-3.5 h-3.5", isRunning ? "animate-spin" : ""].join(" ")} style={{ color: "var(--primary)" }} />
+        )}
+        <span className="text-[11px]" style={{ fontFamily: "var(--font-mono)", color: "var(--foreground)" }}>{title}</span>
+        <span
+          className="ml-auto text-[9px] px-1.5 py-0.5 rounded-[3px] uppercase tracking-[0.1em]"
+          style={{
+            fontFamily: "var(--font-mono)",
+            color: error ? "var(--destructive)" : isDone ? "var(--secondary)" : "var(--primary)",
+            background: "color-mix(in srgb, currentColor 12%, transparent)",
+            border: "1px solid color-mix(in srgb, currentColor 30%, transparent)",
+          }}
+        >
+          {error ? "error" : isDone ? "done" : "running"}
+        </span>
       </div>
-      {args && Object.keys(args).length > 0 && (<pre className="mt-1 text-[10px] leading-snug text-white/55 whitespace-pre-wrap break-words max-h-32 overflow-auto">{JSON.stringify(args, null, 2)}</pre>)}
-      {error && (<p className="mt-1 text-[10px] text-red-300/80">{error}</p>)}
+      {args && Object.keys(args).length > 0 && (
+        <pre
+          className="mt-1 text-[10px] leading-snug whitespace-pre-wrap break-words max-h-32 overflow-auto"
+          style={{ fontFamily: "var(--font-mono)", color: "var(--muted-foreground)" }}
+        >{JSON.stringify(args, null, 2)}</pre>
+      )}
+      {error && (<p className="mt-1 text-[10px]" style={{ color: "var(--destructive)" }}>{error}</p>)}
     </div>
   );
 }
@@ -112,5 +139,5 @@ export function CopilotTools() {
     render: ({ status, args }) => (<ToolCallCard title="report_render_error" status={status} args={args as Record<string, unknown>} />),
   });
 
-  return <AgentActivityPanel />;
+  return null;
 }
