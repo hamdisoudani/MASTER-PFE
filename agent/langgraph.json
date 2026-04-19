@@ -1,0 +1,8 @@
+{
+  "dependencies": ["./agent"],
+  "graphs": {
+    "syllabus_agent": "./agent/graph.py:graph"
+  },
+  "env": "./agent/.env",
+  "python_version": "3.11"
+}

@@ -1,79 +1,94 @@
 # Railway Deployment Guide
 
-## Architecture
+Three services from this monorepo. Each uses its own Dockerfile — Railway's "Root Directory" selects which one.
 
-Deploy **3 Railway services** from this monorepo — each maps to one subdirectory:
+| Service  | Root Directory | Dockerfile         | Internal port |
+|----------|---------------:|--------------------|--------------:|
+| Agent    | `agent`        | `agent/Dockerfile`    | `$PORT` (default `2024`) |
+| Backend  | `backend`      | `backend/Dockerfile`  | `$PORT` (default `3001`) |
+| Frontend | `frontend`     | `frontend/Dockerfile` | `$PORT` (default `3000`) |
 
-| Service | Root Directory | Auto-detected |
-|---------|---------------|---------------|
-| **Agent** (Python FastAPI) | `agent/` | Python via `nixpacks.toml` |
-| **Backend** (NestJS) | `backend/` | Node.js via `railway.toml` |
-| **Frontend** (Next.js) | `frontend/` | Node.js via `railway.toml` |
-
----
-
-## Step-by-Step Setup
-
-### 1. Create Railway Project
-[railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo** → `hamdisoudani/MASTER-PFE`
+Railway injects `$PORT` at runtime and the Dockerfiles honour it; all three bind `0.0.0.0`.
 
 ---
 
-### 2. Agent Service (deploy first)
-- **Add Service** → GitHub → same repo → **Root Directory** = `agent`
-- Railway builds with `nixpacks.toml` (Python 3.12, pip install)
-- **Environment Variables:**
-  ```
-  LLM_BASE_URL   = https://integrate.api.nvidia.com/v1
-  LLM_API_KEY    = nvapi-your-key-here
-  LLM_MODEL      = mistralai/mistral-small-4-119b-2603
-  ```
-- After deploy, copy the **Public URL** (e.g. `https://agent-xxx.railway.app`)
+## 1. Create Railway project
+[railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo** → `hamdisoudani/MASTER-PFE`.
+
+Add **three services** from the same repo (see table below).
 
 ---
 
-### 3. Backend Service
-- **Add Service** → GitHub → same repo → **Root Directory** = `backend`
-- **Environment Variables:**
+## 2. Agent (deploy first)
+
+- **Root Directory**: `agent`
+- Railway auto-picks `agent/railway.toml` → Dockerfile build.
+- **Environment variables:**
   ```
-  CORS_ORIGINS   = *
+  LLM_BASE_URL = https://integrate.api.nvidia.com/v1
+  LLM_API_KEY  = nvapi-...
+  LLM_MODEL    = mistralai/mistral-small-4-119b-2603
   ```
-- After deploy, copy the **Public URL** (e.g. `https://backend-xxx.railway.app`)
+- Health check: `/ok` (LangGraph dev server).
+- Expose public networking → note the URL (e.g. `https://agent-xxx.up.railway.app`).
 
 ---
 
-### 4. Frontend Service
-- **Add Service** → GitHub → same repo → **Root Directory** = `frontend`
-- **Environment Variables:**
+## 3. Backend
+
+- **Root Directory**: `backend`
+- **Environment variables:**
   ```
+  CORS_ORIGINS   = https://<frontend-domain>
+  LANGGRAPH_URL  = https://<agent-domain>
   ```
-- After deploy → open the frontend URL to see the chat UI
+- Health check: `/health`.
+- Note the URL.
 
 ---
 
-## Zero-config Railway features used
-- Each `railway.toml` defines `buildCommand` + `startCommand`
-- `$PORT` is injected automatically by Railway
-- `output: standalone` in `next.config.js` = minimal Docker image for Next.js
-- `healthcheckPath` ensures Railway waits for service readiness before routing traffic
+## 4. Frontend
+
+- **Root Directory**: `frontend`
+- **Build-time variables** (must be set in Railway → _Variables_ → _Build_, because they are baked into the static bundle):
+  ```
+  NEXT_PUBLIC_LANGGRAPH_URL = https://<agent-domain>
+  NEXT_PUBLIC_API_BASE_URL  = https://<backend-domain>
+  NEXT_PUBLIC_ASSISTANT_ID  = syllabus_agent
+  NEXT_PUBLIC_PUSHER_KEY    = <optional>
+  NEXT_PUBLIC_PUSHER_CLUSTER= <optional, e.g. eu>
+  ```
+- Expose public networking.
 
 ---
 
-## Local Development
-```bash
-# Agent
-cd agent && pip install -r requirements.txt
-cp .env.example .env   # fill in LLM_API_KEY
-uvicorn agent.main:app --port 8000
+## Key Dockerfile details
 
-# Backend (new terminal)
-cd backend && npm install
+### `agent/Dockerfile`
+- `python:3.11-slim` + `pip install -r requirements.txt` (includes `langgraph-cli[inmem]`).
+- Copies repo into `/app/agent/` and `langgraph.json` to `/app/`.
+- `CMD` runs `langgraph dev --host 0.0.0.0 --port $PORT --no-browser --allow-blocking`.
+- Exposes `/ok`, `/info`, `/threads`, `/runs`, `/assistants` (standard LangGraph API surface).
 
-# Frontend (new terminal)
-cd frontend && npm install
-```
+### `backend/Dockerfile`
+- Two-stage (`builder` + `runner`), `node:20-alpine`.
+- Installs dev deps for `nest build`, then reinstalls with `--omit=dev` in runner.
+- Binds `0.0.0.0:$PORT`, defaults to `3001`.
 
-Or all at once:
+### `frontend/Dockerfile`
+- Three-stage: `deps` → `builder` → `runner`.
+- Accepts `NEXT_PUBLIC_*` build args so `next build` inlines them.
+- Uses `output: "standalone"` from `next.config.js`; runner only ships `.next/standalone` + `.next/static` + `public/`.
+- Runs as non-root `nextjs` user.
+
+---
+
+## Local dev
 ```bash
 docker compose up --build
+# agent   → http://localhost:2024  (health: /ok)
+# backend → http://localhost:3001  (health: /health)
+# front   → http://localhost:3000
 ```
+
+Or run each service natively — see `README.md`.
