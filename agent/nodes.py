@@ -264,6 +264,79 @@ def _build_system_prompt(state: AgentState) -> str:
     return base
 
 
+def _sanitize_for_mistral(messages: list) -> list:
+    """Enforce the role-alternation rules NVIDIA NIM / Mistral require.
+
+    Symptoms this fixes:
+        openai.BadRequestError: 400 - "Unexpected role 'user' after role 'tool'"
+
+    Rules we enforce, in order, on a copy of the message list:
+      1. Every ToolMessage must be immediately preceded by an AIMessage that
+         declared a matching tool_call_id. If it is not (e.g. the AIMessage
+         was trimmed by summarization), drop the ToolMessage — it has no
+         home and Mistral will reject the whole request.
+      2. After a ToolMessage the next message MUST be an AIMessage. If the
+         next message is a HumanMessage or SystemMessage (which happens when
+         a new user turn lands while the previous turn's tail was a tool
+         result, or when the search subgraph wrote ToolMessages last), we
+         inject a minimal empty AIMessage("") between them so alternation
+         holds.
+      3. Consecutive HumanMessages collapse into one (some clients resend).
+      4. Leading ToolMessages at the very start of the list are dropped
+         (they have no preceding AIMessage by definition).
+    """
+    if not messages:
+        return messages
+
+    cleaned: list = []
+    valid_tool_call_ids: set[str] = set()
+
+    for m in messages:
+        if isinstance(m, AIMessage):
+            for tc in (getattr(m, "tool_calls", None) or []):
+                tcid = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                if tcid:
+                    valid_tool_call_ids.add(tcid)
+            cleaned.append(m)
+            continue
+
+        if isinstance(m, ToolMessage):
+            if not cleaned or not isinstance(cleaned[-1], (AIMessage, ToolMessage)):
+                continue
+            tcid = getattr(m, "tool_call_id", None)
+            if tcid and tcid not in valid_tool_call_ids:
+                continue
+            cleaned.append(m)
+            continue
+
+        if isinstance(m, (HumanMessage, SystemMessage)):
+            if cleaned and isinstance(cleaned[-1], ToolMessage):
+                cleaned.append(AIMessage(content=""))
+            if (
+                isinstance(m, HumanMessage)
+                and cleaned
+                and isinstance(cleaned[-1], HumanMessage)
+            ):
+                prev = cleaned[-1]
+                merged_content = (
+                    (prev.content or "")
+                    + ("\n\n" if prev.content and m.content else "")
+                    + (m.content or "")
+                )
+                cleaned[-1] = HumanMessage(content=merged_content)
+                continue
+            cleaned.append(m)
+            continue
+
+        cleaned.append(m)
+
+    while cleaned and isinstance(cleaned[0], ToolMessage):
+        cleaned.pop(0)
+
+    return cleaned
+
+
+
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """Main chat node with system prompt, frontend+server tools, inline plan handling."""
     llm = get_llm()
@@ -276,6 +349,7 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
 
     messages = list(state.get("messages", []))
     messages = await _maybe_summarize(messages, llm)
+    messages = _sanitize_for_mistral(messages)
 
     system_prompt = _build_system_prompt(state)
     full_messages = [SystemMessage(content=system_prompt)] + messages
