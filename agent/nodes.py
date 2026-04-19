@@ -205,24 +205,29 @@ STYLE (chat replies)
 
 
 def _frontend_tool_defs(config: RunnableConfig) -> list[dict[str, Any]]:
+    """Turn the per-run frontend_tools config into OpenAI function definitions.
+
+    If a schema sets ``strict: true`` we forward that flag so OpenAI's
+    Structured Outputs guarantees the tool_call arguments are valid JSON
+    matching the schema — the model cannot emit "...", trailing commas,
+    missing required fields, or invalid block shapes.
+    """
     cfg = (config or {}).get("configurable", {}) or {}
     schemas = cfg.get("frontend_tools") or []
     out: list[dict[str, Any]] = []
-    for s in schemas:
-        name = s.get("name")
+    for item in schemas:
+        name = item.get("name")
         if not name:
             continue
-        params = s.get("parameters") or {"type": "object", "properties": {}}
-        out.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": s.get("description", ""),
-                    "parameters": params,
-                },
-            }
-        )
+        params = item.get("parameters") or {"type": "object", "properties": {}}
+        fn: dict[str, Any] = {
+            "name": name,
+            "description": item.get("description", ""),
+            "parameters": params,
+        }
+        if item.get("strict") is True:
+            fn["strict"] = True
+        out.append({"type": "function", "function": fn})
     return out
 
 

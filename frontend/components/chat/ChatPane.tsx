@@ -9,7 +9,7 @@ import { useThreadSettingsStore } from "@/stores/thread-settings-store";
 import { useThreads } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { Markdown } from "@/components/chat/Markdown";
-import { Loader2, Send, Square, Wrench, Zap, ZapOff } from "lucide-react";
+import { AlertCircle, Loader2, RotateCw, Send, Square, Wrench, Zap, ZapOff } from "lucide-react";
 import { usePlanStore } from "@/stores/plan-store";
 import { PlanCard } from "@/components/chat/PlanCard";
 import { PlanStrip } from "@/components/chat/PlanStrip";
@@ -24,143 +24,259 @@ type AnyMsg = {
   name?: string;
 };
 
+// ── Strict JSON schemas for frontend tools ────────────────────────────────
+// These are forwarded to the agent via config.configurable.frontend_tools
+// and turned into OpenAI function definitions in agent/nodes.py. We pass
+// `strict: true` on every tool so OpenAI's Structured Outputs guarantees the
+// tool_call arguments are valid JSON that matches the schema — the model
+// cannot emit "...", "…", trailing commas, or invalid blocks.
+//
+// OpenAI strict mode rules we respect:
+//   - every object sets additionalProperties:false
+//   - every key in `properties` is listed in `required`
+//   - optional fields are expressed as a nullable union (e.g. ["string","null"])
+//   - no `$ref` self-recursion, no `minimum`/`format`/`pattern`
+//
+// The block schema intentionally omits `children` so the model cannot emit
+// nested blocks (BlockNote supports them, but our agent loop doesn't use
+// them yet and strict mode would otherwise force them to be required).
+
+const TEXT_STYLES_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["bold", "italic", "underline", "strike", "code"],
+  properties: {
+    bold: { type: ["boolean", "null"] },
+    italic: { type: ["boolean", "null"] },
+    underline: { type: ["boolean", "null"] },
+    strike: { type: ["boolean", "null"] },
+    code: { type: ["boolean", "null"] },
+  },
+} as const;
+
+const TEXT_RUN_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["type", "text", "styles"],
+  properties: {
+    type: { type: "string", enum: ["text"] },
+    text: { type: "string" },
+    styles: TEXT_STYLES_SCHEMA,
+  },
+} as const;
+
+const BLOCK_PROPS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["level", "language", "checked"],
+  properties: {
+    level: {
+      description: "Heading level (1, 2, or 3). Null for non-heading blocks.",
+      type: ["integer", "null"],
+      enum: [1, 2, 3, null],
+    },
+    language: {
+      description: "Programming language for codeBlock. Null for non-code blocks.",
+      type: ["string", "null"],
+    },
+    checked: {
+      description: "Checked state for checkListItem. Null otherwise.",
+      type: ["boolean", "null"],
+    },
+  },
+} as const;
+
+const BLOCK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["type", "props", "content"],
+  properties: {
+    type: {
+      type: "string",
+      enum: [
+        "paragraph",
+        "heading",
+        "bulletListItem",
+        "numberedListItem",
+        "checkListItem",
+        "quote",
+        "codeBlock",
+      ],
+    },
+    props: BLOCK_PROPS_SCHEMA,
+    content: {
+      description: "One or more styled text runs that make up the block's text.",
+      type: "array",
+      items: TEXT_RUN_SCHEMA,
+    },
+  },
+} as const;
+
 const FRONTEND_TOOLS = [
   {
     name: "createSyllabus",
     description: "Create a new syllabus with an id, title, subject, and optional description. Use this only when starting a brand new course plan.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["id", "title", "subject", "description"],
       properties: {
         id: { type: "string" },
         title: { type: "string" },
         subject: { type: "string" },
-        description: { type: "string" },
+        description: { type: ["string", "null"] },
       },
-      required: ["id", "title", "subject"],
     },
   },
   {
     name: "addChapter",
     description: "Append a new chapter to an existing syllabus. Provide the syllabusId, a fresh chapterId, a title, and an optional description.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["syllabusId", "chapterId", "title", "description"],
       properties: {
         syllabusId: { type: "string" },
         chapterId: { type: "string" },
         title: { type: "string" },
-        description: { type: "string" },
+        description: { type: ["string", "null"] },
       },
-      required: ["syllabusId", "chapterId", "title"],
     },
   },
   {
     name: "addLesson",
-    description: "Append a lesson to an existing chapter. `content` is a BlockNote block array (use simple paragraph blocks if unsure).",
+    description: "Append a lesson to an existing chapter. `content` MUST be a BlockNote block array — each item a full block object matching the block schema (type, props, content[]).",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["chapterId", "lessonId", "title", "content"],
       properties: {
         chapterId: { type: "string" },
         lessonId: { type: "string" },
         title: { type: "string" },
-        content: { type: "array", items: { type: "object" } },
+        content: { type: "array", items: BLOCK_SCHEMA },
       },
-      required: ["chapterId", "lessonId", "title", "content"],
     },
   },
   {
     name: "updateLessonContent",
-    description: "Replace the full BlockNote content of an existing lesson.",
+    description: "Replace the full BlockNote content of an existing lesson. Prefer patchLessonBlocks when only part of a lesson changes.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["lessonId", "content"],
       properties: {
         lessonId: { type: "string" },
-        content: { type: "array", items: { type: "object" } },
+        content: { type: "array", items: BLOCK_SCHEMA },
       },
-      required: ["lessonId", "content"],
     },
   },
   {
     name: "appendLessonContent",
     description: "Append BlockNote blocks to the end of an existing lesson without removing prior content.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["lessonId", "blocks"],
       properties: {
         lessonId: { type: "string" },
-        blocks: { type: "array", items: { type: "object" } },
+        blocks: { type: "array", items: BLOCK_SCHEMA },
       },
-      required: ["lessonId", "blocks"],
     },
   },
   {
     name: "getSyllabusOutline",
-    description: "Read-only. Returns the skeleton of the current thread's syllabus: { syllabusId, title, subject, chapters:[{ id, title, description, lessons:[{ id, title, blockCount }] }], allSyllabi }. Call this FIRST when you need to orient yourself before editing. If no syllabusId is given, the active one is used.",
+    description: "Read-only. Returns the skeleton of the current thread's syllabus. Pass null for syllabusId to use the active one.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["syllabusId"],
       properties: {
-        syllabusId: { type: "string" },
+        syllabusId: { type: ["string", "null"] },
       },
     },
   },
   {
     name: "readLessonBlocks",
-    description: "Read-only. Returns a slice of a lesson's BlockNote content by 1-indexed inclusive block range: { totalBlocks, start, end, blocks:[{ index, id, type, text }] }. Use this before patchLessonBlocks so you know exactly what you are replacing.",
+    description: "Read-only. Returns a 1-indexed inclusive slice of a lesson's BlockNote content. Use this before patchLessonBlocks so you know what you're replacing.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["lessonId", "startBlock", "endBlock"],
       properties: {
         lessonId: { type: "string" },
-        startBlock: { type: "integer", minimum: 1 },
-        endBlock: { type: "integer", minimum: 1 },
+        startBlock: { type: "integer" },
+        endBlock: { type: "integer" },
       },
-      required: ["lessonId", "startBlock", "endBlock"],
     },
   },
   {
     name: "patchLessonBlocks",
-    description: "Surgical edit of a BlockNote lesson. op='replace' swaps blocks [startBlock..endBlock] with the provided blocks. op='insert' inserts before startBlock (endBlock ignored). op='delete' removes [startBlock..endBlock]. Prefer this over updateLessonContent whenever only part of a lesson changes. Block indices are 1-based and inclusive.",
+    description: "Surgical edit of a BlockNote lesson. op='replace' swaps blocks [startBlock..endBlock] with the provided blocks. op='insert' inserts before startBlock (endBlock is ignored, pass null). op='delete' removes [startBlock..endBlock] (blocks is ignored, pass null/[]). Block indices are 1-based and inclusive.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["lessonId", "op", "startBlock", "endBlock", "blocks"],
       properties: {
         lessonId: { type: "string" },
         op: { type: "string", enum: ["replace", "insert", "delete"] },
-        startBlock: { type: "integer", minimum: 1 },
-        endBlock: { type: "integer", minimum: 1 },
-        blocks: { type: "array", items: { type: "object" } },
+        startBlock: { type: "integer" },
+        endBlock: { type: ["integer", "null"] },
+        blocks: {
+          type: ["array", "null"],
+          items: BLOCK_SCHEMA,
+        },
       },
-      required: ["lessonId", "op", "startBlock"],
     },
   },
   {
     name: "setPlan",
-    description: "Replace the thread's task plan with the given ordered list. Use this at the start of any non-trivial request to split the work into sub-tasks (e.g. 'search for references', 'draft outline', 'write chapter 1'). Status defaults to 'pending'.",
+    description: "Replace the thread's task plan. Use this at the start of any non-trivial request to split the work into 3–7 sub-tasks. Status defaults to 'pending' — pass null if you don't want to set it explicitly.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["items"],
       properties: {
         items: {
           type: "array",
           items: {
             type: "object",
+            additionalProperties: false,
+            required: ["id", "title", "status"],
             properties: {
-              id: { type: "string" },
+              id: { type: ["string", "null"] },
               title: { type: "string" },
-              status: { type: "string", enum: ["pending", "in_progress", "done"] },
+              status: {
+                type: ["string", "null"],
+                enum: ["pending", "in_progress", "done", null],
+              },
             },
-            required: ["title"],
           },
         },
       },
-      required: ["items"],
     },
   },
   {
     name: "updatePlanItem",
     description: "Flip a single plan item's status. Mark the current task 'in_progress' when you start it and 'done' the moment it finishes, before moving on.",
+    strict: true,
     parameters: {
       type: "object",
+      additionalProperties: false,
+      required: ["id", "status"],
       properties: {
         id: { type: "string" },
         status: { type: "string", enum: ["pending", "in_progress", "done"] },
       },
-      required: ["id", "status"],
     },
   },
 ] as const;
@@ -362,6 +478,10 @@ export function ChatPane() {
 
   const messages = (stream.messages ?? []) as AnyMsg[];
   const isStreaming = stream.isLoading;
+  // useStream surfaces the last run error here (network, tool-call JSON, LLM
+  // API 4xx/5xx, etc.). We render it inline so the thread doesn't silently
+  // stall and give the user a one-click retry of their last user turn.
+  const streamError = (stream as any).error as unknown;
   const interruptValue = ((stream as any).interrupt?.value ?? null) as FrontendToolCall | null;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -419,18 +539,29 @@ export function ChatPane() {
     setResumeBusy(true);
     const { name, args } = interruptValue;
     const a = (args ?? {}) as any;
+    // Strict-mode tool calls may send explicit nulls for optional fields.
+    // Normalize null → undefined/[] so the store APIs (which use `?:` optional
+    // typing) don't complain.
+    const nn = <T,>(v: T | null | undefined): T | undefined => (v ?? undefined) as T | undefined;
     const dispatch: Record<string, () => any> = {
-      createSyllabus: () => store.createSyllabus(a.id, a.title, a.subject, a.description),
-      addChapter: () => store.addChapter(a.syllabusId, a.chapterId, a.title, a.description),
+      createSyllabus: () => store.createSyllabus(a.id, a.title, a.subject, nn(a.description)),
+      addChapter: () => store.addChapter(a.syllabusId, a.chapterId, a.title, nn(a.description)),
       addLesson: () => store.addLesson(a.chapterId, a.lessonId, a.title, a.content ?? []),
       updateLessonContent: () => store.updateLessonContent(a.lessonId, a.content ?? []),
       appendLessonContent: () => store.appendLessonContent(a.lessonId, a.blocks ?? []),
       patchLessonBlocks: () =>
         store.patchLessonBlocks(a.lessonId, a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
-      getSyllabusOutline: () => store.getSyllabusOutline(a.syllabusId),
+      getSyllabusOutline: () => store.getSyllabusOutline(nn(a.syllabusId)),
       readLessonBlocks: () =>
         store.readLessonBlocks(a.lessonId, a.startBlock, a.endBlock),
-      setPlan: () => plan.setPlan(a.items ?? []),
+      setPlan: () =>
+        plan.setPlan(
+          (a.items ?? []).map((it: any) => ({
+            ...it,
+            id: nn(it?.id),
+            status: nn(it?.status),
+          }))
+        ),
       updatePlanItem: () => plan.updatePlanItem(a.id, a.status),
     };
     let result: any;
@@ -469,16 +600,37 @@ export function ChatPane() {
     void onApprove();
   }, [autoAccept, interruptValue, resumeBusy, onApprove]);
 
+  const submitUserText = useCallback(
+    (text: string) => {
+      stickyRef.current = true;
+      stream.submit(
+        { messages: [{ role: "user", content: text }] },
+        { config: { configurable: { frontend_tools: FRONTEND_TOOLS } } } as any
+      );
+    },
+    [stream]
+  );
+
   const onSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
     setInput("");
-    stickyRef.current = true;
-    stream.submit(
-      { messages: [{ role: "user", content: text }] },
-      { config: { configurable: { frontend_tools: FRONTEND_TOOLS } } } as any
-    );
-  }, [input, isStreaming, stream]);
+    submitUserText(text);
+  }, [input, isStreaming, submitUserText]);
+
+  const onRetry = useCallback(() => {
+    if (isStreaming) return;
+    const lastUser = [...messages].reverse().find((m) => (m.type ?? m.role) === "user" || (m.type ?? m.role) === "human");
+    const text =
+      typeof lastUser?.content === "string"
+        ? (lastUser.content as string)
+        : messageText(lastUser as any);
+    if (!text.trim()) {
+      toast.error("Nothing to retry", { description: "Send a new message instead." });
+      return;
+    }
+    submitUserText(text);
+  }, [isStreaming, messages, submitUserText]);
 
   const onStop = useCallback(async () => {
     const runId = (stream as any).values?.run_id as string | undefined;
@@ -587,6 +739,9 @@ export function ChatPane() {
           <MessageBubble key={visibleKey(m, i)} m={m} />
         ))}
         {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks"]).has(interruptValue.name) && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
+        {streamError && !isStreaming && (
+          <ErrorBubble error={streamError} onRetry={onRetry} />
+        )}
         <div ref={endRef} />
       </div>
       <PlanStrip />
@@ -620,3 +775,74 @@ export function ChatPane() {
     </div>
   );
 }
+
+function formatStreamError(err: unknown): { title: string; detail: string } {
+  if (!err) return { title: "Unknown error", detail: "" };
+  const raw: any = err;
+  let title = "Run failed";
+  let detail = "";
+  if (typeof raw === "string") {
+    detail = raw;
+  } else if (raw?.message) {
+    detail = String(raw.message);
+  } else {
+    try {
+      detail = JSON.stringify(raw, null, 2);
+    } catch {
+      detail = String(raw);
+    }
+  }
+  // Extract the useful part of langgraph/openai error envelopes so the user
+  // sees "BadRequestError: Expecting ',' delimiter" instead of a 2 KB blob.
+  const m = detail.match(/BadRequestError.*?:\s*([^\n"\]}]+)/);
+  if (m) {
+    title = "Model returned invalid tool arguments";
+    detail = m[0];
+  } else if (/timeout|ECONN|fetch failed/i.test(detail)) {
+    title = "Network error";
+  } else if (/401|forbidden|unauthori/i.test(detail)) {
+    title = "Authentication error";
+  } else if (/429|rate limit/i.test(detail)) {
+    title = "Rate limited";
+  }
+  if (detail.length > 600) detail = detail.slice(0, 600) + "…";
+  return { title, detail };
+}
+
+function ErrorBubble({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const { title, detail } = formatStreamError(error);
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-[var(--destructive)]/40 bg-[var(--destructive)]/5 p-3 text-xs text-[var(--foreground)]">
+      <div className="flex items-start gap-2">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--destructive)]" />
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-[var(--destructive)]">{title}</div>
+          <div className={`mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-[var(--muted-foreground)] ${expanded ? "" : "line-clamp-3"}`}>
+            {detail || "The agent run failed without a message."}
+          </div>
+          {detail && detail.length > 160 && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1 text-[11px] text-[var(--primary)] hover:underline"
+            >
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="inline-flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-[11px] font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+        >
+          <RotateCw className="h-3 w-3" />
+          Retry last message
+        </button>
+      </div>
+    </div>
+  );
+}
+
