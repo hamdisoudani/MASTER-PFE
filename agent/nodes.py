@@ -184,18 +184,71 @@ def _build_system_prompt(state: AgentState) -> str:
         base += "\n" + "\n".join(ctx_lines)
 
     plan = state.get("plan", [])
+    plan_status = state.get("planStatus", "idle")
+    current_index = state.get("currentStepIndex", 0)
+    finished = state.get("finished", False)
     if plan:
-        plan_lines = ["\n## Current plan"]
+        total = len(plan)
+        done_count = sum(1 for s in plan if s.get("status") == "done")
+        active_step = plan[current_index] if 0 <= current_index < total else None
+
+        plan_lines = [
+            "\n## Your active plan",
+            "You previously committed to the following plan. It is live state, "
+            "not a suggestion. You MUST work it to completion before replying to "
+            "the user with a final answer.",
+            "",
+            f"Progress: {done_count}/{total} done   |   planStatus={plan_status}   |   "
+            f"currentStepIndex={current_index}   |   finished={finished}",
+            "",
+            "Steps:",
+        ]
         for step in plan:
-            status_icon = {
-                "pending": "waiting",
-                "in_progress": "active",
-                "searching": "searching",
-                "done": "done",
-            }.get(step.get("status", ""), "?")
+            sid = step.get("id", "?")
+            status = step.get("status", "")
+            marker = {
+                "pending": "[ ]",
+                "in_progress": "[>]",
+                "searching": "[~]",
+                "done": "[x]",
+            }.get(status, "[?]")
+            arrow = "  <-- CURRENT" if sid == current_index and status != "done" else ""
             plan_lines.append(
-                f"  [{status_icon}] Step {step.get('id', '?')}: "
-                f"[{step.get('type', '?')}] {step.get('title', '')}"
+                f"  {marker} Step {sid} ({step.get('type', '?')}, {status}): "
+                f"{step.get('title', '')}{arrow}"
+            )
+
+        plan_lines += [
+            "",
+            "### Plan rules (read every turn)",
+            "1. You OWN this plan. After you finish the work for the CURRENT step "
+            "(step " + str(current_index) + " above), you MUST call "
+            "`mark_step_done(step_id=" + str(current_index) + ")` in the SAME turn "
+            "or the turn immediately after the final tool result, so the UI and "
+            "state advance to the next step. Do not wait for the user to ask.",
+            "2. Do NOT call `mark_step_done` before the step's work is actually "
+            "complete (e.g. before the frontend tool has returned `ok: true`, "
+            "or before you have verified with `read_lesson`).",
+            "3. If the plan is wrong, out-of-date, or the user changed direction, "
+            "replace it with a fresh `set_plan(...)` call. A new `set_plan` "
+            "resets progress to step 0.",
+            "4. Only stop taking actions (reply in plain text with no tool calls) "
+            "when EITHER `planStatus == 'done'` / `finished == true`, OR the "
+            "user asked a pure question that does not require plan work.",
+            "5. Never silently abandon an in-progress plan. If you cannot proceed, "
+            "tell the user why, then either `mark_step_done` (if genuinely "
+            "done) or `set_plan` with a corrected plan.",
+            "",
+        ]
+        if active_step is not None and active_step.get("status") != "done":
+            plan_lines.append(
+                f"### Focus right now: step {current_index} "
+                f"({active_step.get('type','?')}) -> {active_step.get('title','')}"
+            )
+        elif plan_status == "done" or finished:
+            plan_lines.append(
+                "### Plan is complete. Summarize the result to the user; do not "
+                "call more mutation tools unless the user asks for something new."
             )
         base += "\n".join(plan_lines)
 
@@ -360,12 +413,36 @@ async def scraper_node(state: AgentState) -> dict[str, Any]:
 
 
 def route_after_chat(state: AgentState) -> str:
-    """Route after chat_node: python tools, search subgraph, or end."""
+    """Route after chat_node.
+
+    Rules (in order):
+      1. If the last message is a ToolMessage (e.g. CopilotKit frontend tool
+         just resumed us), loop back into chat_node so the LLM can react,
+         unless the run is already `finished`.
+      2. If the last AIMessage has python non-plan tool calls -> tools node.
+      3. If the current plan step is a pending `search` step -> search_subgraph.
+      4. If the last AIMessage has only plan tool calls
+         (`set_plan` / `mark_step_done`) -> loop chat_node.
+      5. If the last AIMessage has only frontend tool calls -> end (the
+         CopilotKit client will execute the tool and resume us with a
+         ToolMessage; the graph entry is chat_node so execution continues).
+      6. If the last AIMessage has no tool calls but `planStatus` is still
+         `in_progress` and we are not `finished`, loop chat_node so the LLM
+         can advance the plan (emit the next mutation or `mark_step_done`).
+      7. Otherwise -> end.
+    """
+    from langchain_core.messages import AIMessage as _AI, ToolMessage as _TM
+
     messages = state.get("messages", [])
     if not messages:
         return "end"
 
+    finished = state.get("finished", False)
     last = messages[-1]
+
+    if isinstance(last, _TM):
+        return "end" if finished else "chat_node"
+
     tool_calls = getattr(last, "tool_calls", None) or []
 
     python_non_plan = [
@@ -387,7 +464,16 @@ def route_after_chat(state: AgentState) -> str:
             return "search_subgraph"
 
     plan_calls = [tc for tc in tool_calls if tc["name"] in PLAN_TOOL_NAMES]
-    if plan_calls:
+    non_plan_calls = [tc for tc in tool_calls if tc["name"] not in PLAN_TOOL_NAMES]
+
+    if plan_calls and not non_plan_calls:
+        return "end" if finished else "chat_node"
+
+    if non_plan_calls:
+        return "end"
+
+    plan_status = state.get("planStatus", "idle")
+    if plan_status == "in_progress" and not finished and plan:
         return "chat_node"
 
     return "end"
