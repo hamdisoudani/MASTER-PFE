@@ -1,12 +1,5 @@
 /**
  * BlockNote content validator.
- *
- * Two layers:
- *  1) Structural: every entry is { type, props?, content?, children? } with
- *     strings for `type` and arrays for `content`/`children`.
- *  2) Runtime: we attempt `BlockNoteEditor.create({ initialContent })` and
- *     catch any throw. This exercises BlockNote's own schema parser without
- *     mounting the editor into the DOM.
  */
 
 import { BlockNoteEditor } from "@blocknote/core";
@@ -33,17 +26,26 @@ const ALLOWED_BLOCK_TYPES = new Set([
   "divider",
 ]);
 
+const EXAMPLE = '{"type":"paragraph","content":[{"type":"text","text":"hello"}]}';
+
 function structuralCheck(blocks: unknown): string | null {
-  if (!Array.isArray(blocks)) return "content must be an array of blocks";
+  if (!Array.isArray(blocks)) {
+    return `content must be an array of blocks. Received type=${typeof blocks}. Example of a valid array: [${EXAMPLE}]`;
+  }
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i] as Record<string, unknown> | null;
-    if (!b || typeof b !== "object") return `block[${i}] is not an object`;
-    if (typeof b.type !== "string") return `block[${i}].type must be a string`;
-    if (!ALLOWED_BLOCK_TYPES.has(b.type)) {
-      return `block[${i}].type "${b.type}" is not a supported BlockNote type`;
+    if (!b || typeof b !== "object" || Array.isArray(b)) {
+      return `block[${i}] must be an object. Received: ${JSON.stringify(b).slice(0, 180)}. Expected shape: ${EXAMPLE}`;
+    }
+    if (typeof b.type !== "string") {
+      const keys = Object.keys(b).join(",");
+      return `block[${i}].type must be a string. Got block with keys [${keys}] = ${JSON.stringify(b).slice(0, 200)}. Expected shape: ${EXAMPLE}. Remember: every block MUST have a top-level "type" field (e.g. "paragraph", "heading"), and text goes inside content: [{type:"text", text:"..."}].`;
+    }
+    if (!ALLOWED_BLOCK_TYPES.has(b.type as string)) {
+      return `block[${i}].type "${b.type}" is not a supported BlockNote type. Allowed: ${Array.from(ALLOWED_BLOCK_TYPES).join(", ")}`;
     }
     if (b.content !== undefined && !Array.isArray(b.content) && typeof b.content !== "object") {
-      return `block[${i}].content must be an array or a tableContent object`;
+      return `block[${i}].content must be an array of inline nodes or a tableContent object. Got ${typeof b.content}.`;
     }
     if (b.children !== undefined && !Array.isArray(b.children)) {
       return `block[${i}].children must be an array`;
@@ -71,6 +73,10 @@ export function validateBlockNoteContent(blocks: unknown): ValidationResult {
     return { ok: true, error: null, normalized: doc };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `BlockNote runtime rejected content: ${msg}`, normalized: null };
+    return {
+      ok: false,
+      error: `BlockNote runtime rejected content: ${msg}. Example of a valid block: ${EXAMPLE}`,
+      normalized: null,
+    };
   }
 }
