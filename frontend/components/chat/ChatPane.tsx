@@ -9,7 +9,7 @@ import { useThreadSettingsStore } from "@/stores/thread-settings-store";
 import { useThreads } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { Markdown } from "@/components/chat/Markdown";
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Loader2, OctagonAlert, RotateCw, Send, Square, Wrench, Zap, ZapOff } from "lucide-react";
+import { AlertCircle, Ban, BookOpen, CheckCircle2, ChevronDown, ChevronRight, Circle, Eye, FileText, Layers, ListTodo, Loader2, OctagonAlert, Pencil, RotateCw, Send, Square, Wrench, XCircle, Zap, ZapOff } from "lucide-react";
 import { usePlanStore } from "@/stores/plan-store";
 import { PlanCard } from "@/components/chat/PlanCard";
 import { PlanStrip } from "@/components/chat/PlanStrip";
@@ -295,6 +295,8 @@ function messageText(m: AnyMsg): string {
 }
 
 type ToolCall = { id?: string; name?: string; args?: Record<string, unknown> };
+type ToolStatus = "running" | "completed" | "failed" | "rejected";
+type ParsedResult = { raw: string; json: any | null; status: ToolStatus };
 
 function getToolCalls(m: AnyMsg): ToolCall[] {
   return ((m.tool_calls as any[]) || []) as ToolCall[];
@@ -308,54 +310,284 @@ function getMessageError(m: AnyMsg): { message?: string; type?: string } | null 
   return { message: err.message, type: err.type };
 }
 
-const ToolCallTimeline = memo(function ToolCallTimeline({
-  calls,
-  results,
+// Classify the lifecycle of a tool call from its matching ToolMessage.
+function parseResult(raw: string | undefined, isLastAssistant: boolean, isStreaming: boolean): ParsedResult {
+  if (raw === undefined) {
+    const status: ToolStatus = isLastAssistant && isStreaming ? "running" : "running";
+    return { raw: "", json: null, status };
+  }
+  let json: any = null;
+  try { json = JSON.parse(raw); } catch { /* plain text result */ }
+  let status: ToolStatus = "completed";
+  if (json && typeof json === "object") {
+    if (json.ok === false) {
+      status = json.error === "user_rejected" ? "rejected" : "failed";
+    }
+  }
+  return { raw, json, status };
+}
+
+// ── Per-tool pretty renderers ────────────────────────────────────────────
+// Each returns a small React node rendered inside the tool call card. The
+// default renderer shows a compact JSON preview.
+
+function ToolStatusBadge({ status }: { status: ToolStatus }) {
+  const cfg: Record<ToolStatus, { label: string; icon: any; cls: string }> = {
+    running:   { label: "running",   icon: Loader2,     cls: "border-[var(--primary)]/40 bg-[var(--primary)]/10 text-[var(--primary)]" },
+    completed: { label: "completed", icon: CheckCircle2, cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-500" },
+    failed:    { label: "failed",    icon: XCircle,      cls: "border-[var(--destructive)]/40 bg-[var(--destructive)]/10 text-[var(--destructive)]" },
+    rejected:  { label: "rejected",  icon: Ban,          cls: "border-amber-500/40 bg-amber-500/10 text-amber-500" },
+  };
+  const c = cfg[status];
+  const Icon = c.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${c.cls}`}>
+      <Icon className={`h-3 w-3 ${status === "running" ? "animate-spin" : ""}`} />
+      {c.label}
+    </span>
+  );
+}
+
+const TOOL_META: Record<string, { label: string; icon: any; tone: string }> = {
+  createSyllabus:      { label: "Create syllabus",      icon: BookOpen,  tone: "text-sky-400" },
+  addChapter:          { label: "Add chapter",          icon: Layers,    tone: "text-indigo-400" },
+  addLesson:           { label: "Add lesson",           icon: FileText,  tone: "text-emerald-400" },
+  updateLessonContent: { label: "Rewrite lesson",       icon: Pencil,    tone: "text-amber-400" },
+  appendLessonContent: { label: "Append to lesson",     icon: Pencil,    tone: "text-amber-400" },
+  patchLessonBlocks:   { label: "Patch lesson blocks",  icon: Pencil,    tone: "text-amber-400" },
+  getSyllabusOutline:  { label: "Read outline",         icon: Eye,       tone: "text-[var(--muted-foreground)]" },
+  readLessonBlocks:    { label: "Read lesson blocks",   icon: Eye,       tone: "text-[var(--muted-foreground)]" },
+  setPlan:             { label: "Plan",                 icon: ListTodo,  tone: "text-[var(--primary)]" },
+  updatePlanItem:      { label: "Update plan item",     icon: ListTodo,  tone: "text-[var(--primary)]" },
+};
+
+function toolMeta(name: string | undefined) {
+  if (!name) return { label: "Tool", icon: Wrench, tone: "text-[var(--muted-foreground)]" };
+  return TOOL_META[name] ?? { label: name, icon: Wrench, tone: "text-[var(--muted-foreground)]" };
+}
+
+// Short plain-text snippet from a BlockNote block array (first ~N chars).
+function previewBlocks(blocks: any[] | undefined, max = 160): string {
+  if (!Array.isArray(blocks)) return "";
+  const text = blocks
+    .map((b: any) => {
+      const c = b?.content;
+      if (typeof c === "string") return c;
+      if (Array.isArray(c)) return c.map((r: any) => r?.text ?? "").join("");
+      return "";
+    })
+    .filter(Boolean)
+    .join(" • ");
+  return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+type PlanStatusToken = "todo" | "in_progress" | "done" | string;
+function PlanItemsPreview({ items }: { items: Array<{ id?: string; title?: string; status?: PlanStatusToken }> }) {
+  if (!items?.length) return <div className="text-[11px] text-[var(--muted-foreground)]">empty plan</div>;
+  return (
+    <ul className="space-y-1">
+      {items.map((it, i) => {
+        const s = it.status ?? "todo";
+        const Icon =
+          s === "done" ? CheckCircle2 : s === "in_progress" ? Loader2 : Circle;
+        const cls =
+          s === "done"
+            ? "text-emerald-500"
+            : s === "in_progress"
+            ? "text-[var(--primary)]"
+            : "text-[var(--muted-foreground)]";
+        return (
+          <li key={it.id ?? i} className="flex items-start gap-2 text-[12px]">
+            <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${cls} ${s === "in_progress" ? "animate-spin" : ""}`} />
+            <span className={s === "done" ? "line-through text-[var(--muted-foreground)]" : "text-[var(--foreground)]"}>
+              {it.title ?? "(untitled task)"}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function KV({ k, v }: { k: string; v: string | undefined }) {
+  if (!v) return null;
+  return (
+    <div className="flex gap-2 text-[12px]">
+      <span className="font-mono text-[var(--muted-foreground)] min-w-[72px]">{k}</span>
+      <span className="whitespace-pre-wrap break-words text-[var(--foreground)]">{v}</span>
+    </div>
+  );
+}
+
+function ToolArgsView({ name, args }: { name: string; args: Record<string, any> }) {
+  const a = args ?? {};
+  switch (name) {
+    case "setPlan":
+      return <PlanItemsPreview items={a.items ?? []} />;
+    case "updatePlanItem":
+      return (
+        <div className="flex items-center gap-2 text-[12px]">
+          <span className="font-mono text-[var(--muted-foreground)]">{a.id}</span>
+          <span className="text-[var(--muted-foreground)]">→</span>
+          <span className="font-medium text-[var(--foreground)]">{a.status}</span>
+        </div>
+      );
+    case "createSyllabus":
+      return (
+        <div className="space-y-0.5">
+          <KV k="title" v={a.title} />
+          <KV k="subject" v={a.subject} />
+          <KV k="description" v={a.description} />
+        </div>
+      );
+    case "addChapter":
+      return (
+        <div className="space-y-0.5">
+          <KV k="title" v={a.title} />
+          <KV k="description" v={a.description} />
+        </div>
+      );
+    case "addLesson": {
+      const preview = previewBlocks(a.content);
+      const count = Array.isArray(a.content) ? a.content.length : 0;
+      return (
+        <div className="space-y-1">
+          <KV k="title" v={a.title} />
+          <div className="text-[11px] text-[var(--muted-foreground)]">
+            {count} block{count === 1 ? "" : "s"}
+          </div>
+          {preview && (
+            <div className="rounded bg-[var(--muted)]/50 p-1.5 text-[11px] italic text-[var(--muted-foreground)]">
+              {preview}
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "updateLessonContent":
+    case "appendLessonContent": {
+      const blocks = a.content ?? a.blocks;
+      const count = Array.isArray(blocks) ? blocks.length : 0;
+      const preview = previewBlocks(blocks);
+      return (
+        <div className="space-y-1">
+          <KV k="lesson" v={a.lessonId} />
+          <div className="text-[11px] text-[var(--muted-foreground)]">
+            {count} block{count === 1 ? "" : "s"}
+          </div>
+          {preview && (
+            <div className="rounded bg-[var(--muted)]/50 p-1.5 text-[11px] italic text-[var(--muted-foreground)]">
+              {preview}
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "patchLessonBlocks": {
+      const count = Array.isArray(a.blocks) ? a.blocks.length : 0;
+      return (
+        <div className="space-y-0.5 text-[12px]">
+          <KV k="lesson" v={a.lessonId} />
+          <KV k="op" v={a.op} />
+          <KV k="range" v={a.startBlock ? `${a.startBlock}${a.endBlock ? " → " + a.endBlock : ""}` : undefined} />
+          <div className="text-[11px] text-[var(--muted-foreground)]">{count} new block{count === 1 ? "" : "s"}</div>
+        </div>
+      );
+    }
+    case "getSyllabusOutline":
+      return <div className="text-[12px] text-[var(--muted-foreground)]">Reading outline{a.syllabusId ? ` of ${a.syllabusId}` : ""}…</div>;
+    case "readLessonBlocks":
+      return (
+        <div className="text-[12px] text-[var(--muted-foreground)]">
+          Reading lesson {a.lessonId}
+          {a.startBlock ? ` · ${a.startBlock}${a.endBlock ? "–" + a.endBlock : ""}` : ""}
+        </div>
+      );
+    default:
+      return (
+        <pre className="whitespace-pre-wrap break-all rounded bg-[var(--muted)]/50 p-1.5 text-[11px] font-mono text-[var(--muted-foreground)]">
+          {JSON.stringify(a, null, 2).slice(0, 600)}
+        </pre>
+      );
+  }
+}
+
+function ToolResultView({ name, result }: { name: string; result: ParsedResult }) {
+  if (!result.raw) return null;
+  const payload = result.json;
+  if (result.status === "failed" || result.status === "rejected") {
+    const msg = payload?.error ?? payload?.message ?? result.raw;
+    return (
+      <div className="rounded border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 p-1.5 text-[11px] text-[var(--destructive)]">
+        {String(msg).slice(0, 300)}
+      </div>
+    );
+  }
+  const short =
+    name === "getSyllabusOutline" || name === "readLessonBlocks"
+      ? (result.raw.length > 240 ? result.raw.slice(0, 240) + "…" : result.raw)
+      : null;
+  if (!short) return null;
+  return (
+    <div className="text-[11px] font-mono text-[var(--muted-foreground)]">
+      <span className="text-[var(--primary)]">→</span> {short}
+    </div>
+  );
+}
+
+const ToolCallCard = memo(function ToolCallCard({
+  call,
+  result,
 }: {
-  calls: ToolCall[];
-  results: Map<string, string>;
+  call: ToolCall;
+  result: ParsedResult;
 }) {
   const [open, setOpen] = useState(false);
-  if (!calls.length) return null;
+  const meta = toolMeta(call.name);
+  const Icon = meta.icon;
   return (
-    <div className="mt-2 rounded border border-[var(--border)] bg-[var(--background)]/40">
+    <div className="rounded border border-[var(--border)] bg-[var(--background)]/50">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1 px-2 py-1 text-[11px] text-[var(--muted-foreground)] hover:bg-[var(--muted)]/40 transition-colors"
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-[var(--muted)]/40 transition-colors"
       >
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        <Wrench className="h-3 w-3" />
-        <span>
-          {calls.length} tool call{calls.length === 1 ? "" : "s"}:{" "}
-          <code className="font-mono">{calls.map((c) => c.name ?? "tool").join(", ")}</code>
+        {open ? <ChevronDown className="h-3 w-3 shrink-0 text-[var(--muted-foreground)]" /> : <ChevronRight className="h-3 w-3 shrink-0 text-[var(--muted-foreground)]" />}
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${meta.tone}`} />
+        <span className="flex-1 min-w-0 truncate text-[12px] font-medium text-[var(--foreground)]">
+          {meta.label}
         </span>
+        <ToolStatusBadge status={result.status} />
       </button>
       {open && (
-        <div className="border-t border-[var(--border)] divide-y divide-[var(--border)]">
-          {calls.map((tc, idx) => {
-            const res = tc.id ? results.get(tc.id) : undefined;
-            return (
-              <div key={tc.id ?? idx} className="px-2 py-1.5 space-y-1">
-                <div className="text-[11px] font-mono text-[var(--foreground)]">
-                  {idx + 1}. {tc.name ?? "tool"}
-                </div>
-                {tc.args && Object.keys(tc.args).length > 0 && (
-                  <pre className="whitespace-pre-wrap break-all rounded bg-[var(--muted)]/60 p-1.5 text-[10px] font-mono text-[var(--muted-foreground)]">
-                    {JSON.stringify(tc.args, null, 2).slice(0, 800)}
-                  </pre>
-                )}
-                {res !== undefined && (
-                  <div className="text-[10px] font-mono text-[var(--muted-foreground)]">
-                    <span className="text-[var(--primary)]">→</span>{" "}
-                    {res.length > 200 ? res.slice(0, 200) + "…" : res}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div className="border-t border-[var(--border)] px-2 py-2 space-y-2">
+          <ToolArgsView name={call.name ?? ""} args={(call.args as Record<string, any>) ?? {}} />
+          <ToolResultView name={call.name ?? ""} result={result} />
         </div>
       )}
+    </div>
+  );
+});
+
+const ToolCallTimeline = memo(function ToolCallTimeline({
+  calls,
+  results,
+  isLastAssistant,
+  isStreaming,
+}: {
+  calls: ToolCall[];
+  results: Map<string, string>;
+  isLastAssistant: boolean;
+  isStreaming: boolean;
+}) {
+  if (!calls.length) return null;
+  return (
+    <div className="mt-2 space-y-1.5">
+      {calls.map((tc, idx) => {
+        const raw = tc.id ? results.get(tc.id) : undefined;
+        const result = parseResult(raw, isLastAssistant, isStreaming);
+        return <ToolCallCard key={tc.id ?? idx} call={tc} result={result} />;
+      })}
     </div>
   );
 });
@@ -363,9 +595,13 @@ const ToolCallTimeline = memo(function ToolCallTimeline({
 const MessageBubble = memo(function MessageBubble({
   m,
   toolResults,
+  isLastAssistant,
+  isStreaming,
 }: {
   m: AnyMsg;
   toolResults: Map<string, string>;
+  isLastAssistant: boolean;
+  isStreaming: boolean;
 }) {
   const role = m.type ?? m.role;
   const isUser = role === "human" || role === "user";
@@ -406,7 +642,7 @@ const MessageBubble = memo(function MessageBubble({
           <Markdown source={text} />
         )
       ) : null}
-      {calls.length > 0 && <ToolCallTimeline calls={calls} results={toolResults} />}
+      {calls.length > 0 && <ToolCallTimeline calls={calls} results={toolResults} isLastAssistant={isLastAssistant} isStreaming={isStreaming} />}
     </div>
   );
 });
@@ -823,9 +1059,20 @@ export function ChatPane() {
             {threadId ? "No messages yet. Say hi 👋" : "Start a new thread to chat with the syllabus agent."}
           </div>
         )}
-        {messages.map((m, i) => (
-          <MessageBubble key={visibleKey(m, i)} m={m} toolResults={toolResults} />
-        ))}
+        {messages.map((m, i) => {
+          const role = m.type ?? m.role;
+          const isAssistant = role !== "human" && role !== "user" && role !== "tool";
+          const isLast = isAssistant && i === messages.length - 1;
+          return (
+            <MessageBubble
+              key={visibleKey(m, i)}
+              m={m}
+              toolResults={toolResults}
+              isLastAssistant={isLast}
+              isStreaming={isStreaming}
+            />
+          );
+        })}
         {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks"]).has(interruptValue.name) && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
         {streamError && !isStreaming && (
           <ErrorBubble error={streamError} onRetry={onRetry} />
