@@ -2,13 +2,12 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryState } from "nuqs";
 import { useSyllabusAgent } from "@/lib/useSyllabusAgent";
-import { subscribeToolCalls } from "@/lib/pusherClient";
 import { useSyllabusStore } from "@/store/syllabusStore";
 import { useThreadStore } from "@/stores/thread-store";
 import { useThreads } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { Markdown } from "@/components/chat/Markdown";
-import { Loader2, Send, Square } from "lucide-react";
+import { Loader2, Send, Square, Wrench } from "lucide-react";
 
 type AnyMsg = {
   id?: string;
@@ -16,7 +15,78 @@ type AnyMsg = {
   role?: string;
   content?: unknown;
   tool_calls?: unknown[];
+  tool_call_id?: string;
+  name?: string;
 };
+
+const FRONTEND_TOOLS = [
+  {
+    name: "createSyllabus",
+    description: "Create a new syllabus with an id, title, subject, and optional description. Use this only when starting a brand new course plan.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        subject: { type: "string" },
+        description: { type: "string" },
+      },
+      required: ["id", "title", "subject"],
+    },
+  },
+  {
+    name: "addChapter",
+    description: "Append a new chapter to an existing syllabus. Provide the syllabusId, a fresh chapterId, a title, and an optional description.",
+    parameters: {
+      type: "object",
+      properties: {
+        syllabusId: { type: "string" },
+        chapterId: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+      },
+      required: ["syllabusId", "chapterId", "title"],
+    },
+  },
+  {
+    name: "addLesson",
+    description: "Append a lesson to an existing chapter. `content` is a BlockNote block array (use simple paragraph blocks if unsure).",
+    parameters: {
+      type: "object",
+      properties: {
+        chapterId: { type: "string" },
+        lessonId: { type: "string" },
+        title: { type: "string" },
+        content: { type: "array", items: { type: "object" } },
+      },
+      required: ["chapterId", "lessonId", "title", "content"],
+    },
+  },
+  {
+    name: "updateLessonContent",
+    description: "Replace the full BlockNote content of an existing lesson.",
+    parameters: {
+      type: "object",
+      properties: {
+        lessonId: { type: "string" },
+        content: { type: "array", items: { type: "object" } },
+      },
+      required: ["lessonId", "content"],
+    },
+  },
+  {
+    name: "appendLessonContent",
+    description: "Append BlockNote blocks to the end of an existing lesson without removing prior content.",
+    parameters: {
+      type: "object",
+      properties: {
+        lessonId: { type: "string" },
+        blocks: { type: "array", items: { type: "object" } },
+      },
+      required: ["lessonId", "blocks"],
+    },
+  },
+] as const;
 
 function messageText(m: AnyMsg): string {
   const c = m?.content;
@@ -28,11 +98,15 @@ function messageText(m: AnyMsg): string {
       .join("\n");
   }
   if (c == null) return "";
-  try {
-    return JSON.stringify(c, null, 2);
-  } catch {
-    return String(c);
-  }
+  try { return JSON.stringify(c, null, 2); } catch { return String(c); }
+}
+
+function toolCallSummary(m: AnyMsg): string | null {
+  const calls = (m.tool_calls as any[]) || [];
+  if (!calls.length) return null;
+  return calls
+    .map((tc) => `${tc.name ?? "tool"}(${Object.keys(tc.args ?? {}).join(", ")})`)
+    .join(", ");
 }
 
 const MessageBubble = memo(function MessageBubble({ m }: { m: AnyMsg }) {
@@ -41,7 +115,8 @@ const MessageBubble = memo(function MessageBubble({ m }: { m: AnyMsg }) {
   const isTool = role === "tool";
   if (isTool) return null;
   const text = messageText(m);
-  if (!text && !(m.tool_calls && (m.tool_calls as any[]).length)) return null;
+  const callSummary = toolCallSummary(m);
+  if (!text && !callSummary) return null;
   return (
     <div
       className={`rounded-md px-3 py-2 ${
@@ -53,10 +128,17 @@ const MessageBubble = memo(function MessageBubble({ m }: { m: AnyMsg }) {
       <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1">
         {isUser ? "You" : "Agent"}
       </div>
-      {isUser ? (
-        <div className="whitespace-pre-wrap leading-relaxed text-sm">{text}</div>
-      ) : (
-        <Markdown source={text} />
+      {text ? (
+        isUser ? (
+          <div className="whitespace-pre-wrap leading-relaxed text-sm">{text}</div>
+        ) : (
+          <Markdown source={text} />
+        )
+      ) : null}
+      {callSummary && (
+        <div className="mt-1 flex items-center gap-1 text-[11px] text-[var(--muted-foreground)]">
+          <Wrench className="h-3 w-3" /> calling <code>{callSummary}</code>
+        </div>
       )}
     </div>
   );
@@ -64,6 +146,24 @@ const MessageBubble = memo(function MessageBubble({ m }: { m: AnyMsg }) {
 
 function visibleKey(m: AnyMsg, i: number): string {
   return (m.id as string) ?? `${m.type ?? m.role ?? "m"}-${i}`;
+}
+
+type FrontendToolCall = {
+  type: "frontend_tool_call";
+  tool_call_id: string;
+  name: string;
+  args: Record<string, unknown>;
+};
+
+function InterruptBanner({ call }: { call: FrontendToolCall }) {
+  return (
+    <div className="mx-3 my-1 rounded-md border border-dashed border-[var(--primary)]/40 bg-[var(--primary)]/5 px-3 py-2 text-xs flex items-center gap-2">
+      <Loader2 className="h-3 w-3 animate-spin text-[var(--primary)]" />
+      <span>
+        Applying <code className="font-mono">{call.name}</code>…
+      </span>
+    </div>
+  );
 }
 
 export function ChatPane() {
@@ -89,13 +189,14 @@ export function ChatPane() {
     [setThreadIdParam, setActive, refreshThreads]
   );
 
-  const stream = useSyllabusAgent({ threadId, onThreadId: handleThreadId });
+  const stream = useSyllabusAgent({ threadId: threadId ?? undefined, onThreadId: handleThreadId });
   const [input, setInput] = useState("");
   const store = useSyllabusStore();
   const cancel = useCancelStream();
 
   const messages = (stream.messages ?? []) as AnyMsg[];
   const isStreaming = stream.isLoading;
+  const interruptValue = ((stream as any).interrupt?.value ?? null) as FrontendToolCall | null;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -116,43 +217,43 @@ export function ChatPane() {
     return () => cancelAnimationFrame(id);
   }, [messages.length, isStreaming]);
 
-  const joinedRunId = useRef<string | null>(null);
+  const resumingIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const vals = (stream as any).values as any;
-    const runId = vals?.run_id as string | undefined;
-    if (threadId && runId && runId !== joinedRunId.current) {
-      joinedRunId.current = runId;
-      (stream as any).joinStream?.(runId)?.catch?.((e: any) => console.error("joinStream failed", e));
-    }
-  }, [stream, threadId]);
-
-  useEffect(() => {
-    if (!threadId) return;
-    return subscribeToolCalls(threadId, async (payload) => {
-      const activeNow = useThreadStore.getState().activeThreadId;
-      if (activeNow && activeNow !== threadId) return;
-      const { id, name, args } = payload;
+    if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
+    if (resumingIdRef.current === interruptValue.tool_call_id) return;
+    resumingIdRef.current = interruptValue.tool_call_id;
+    const { name, args } = interruptValue;
+    (async () => {
+      let result: any;
       try {
-        const anyStore = store as any;
-        const fn = anyStore?.[name];
-        const result = typeof fn === "function" ? await fn(args) : { ok: false, error: `unknown tool ${name}` };
-        await fetch(`${process.env.NEXT_PUBLIC_LANGGRAPH_URL ?? "http://localhost:2024"}/threads/${threadId}/state`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ values: { tool_result: { id, name, result } } }),
-        });
-      } catch (e) {
-        console.error("tool exec failed", name, e);
+        const fn = (store as any)[name];
+        if (typeof fn !== "function") {
+          result = { ok: false, error: `unknown frontend tool: ${name}` };
+        } else {
+          const argList = Array.isArray(args) ? args : Object.values(args ?? {});
+          const out = await fn(...argList);
+          result = { ok: true, result: out ?? null };
+        }
+      } catch (e: any) {
+        result = { ok: false, error: String(e?.message ?? e) };
       }
-    });
-  }, [threadId, store]);
+      try {
+        (stream as any).submit(undefined, { command: { resume: result } });
+      } catch (e) {
+        console.error("resume failed", e);
+      }
+    })();
+  }, [interruptValue, store, stream]);
 
   const onSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
     setInput("");
     stickyRef.current = true;
-    stream.submit({ messages: [{ role: "user", content: text }] });
+    stream.submit(
+      { messages: [{ role: "user", content: text }] },
+      { config: { configurable: { frontend_tools: FRONTEND_TOOLS } } } as any
+    );
   }, [input, isStreaming, stream]);
 
   const onStop = useCallback(async () => {
@@ -226,6 +327,7 @@ export function ChatPane() {
         {messages.map((m, i) => (
           <MessageBubble key={visibleKey(m, i)} m={m} />
         ))}
+        {interruptValue && <InterruptBanner call={interruptValue} />}
         <div ref={endRef} />
       </div>
       <div className="border-t border-[var(--border)] p-2 flex gap-2 bg-[var(--background)]">

@@ -1,35 +1,26 @@
 from __future__ import annotations
 from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
 
 from agent.state import AgentState
-from agent.nodes import chat_node, search_node, scraper_node, python_tools_node, route_after_chat
-
-
-def _build_search_subgraph():
-    sg = StateGraph(AgentState)
-    sg.add_node("search_node", search_node)
-    sg.add_node("scraper_node", scraper_node)
-    sg.add_edge("search_node", "scraper_node")
-    sg.set_entry_point("search_node")
-    sg.set_finish_point("scraper_node")
-    return sg.compile()
+from agent.nodes import chat_node, frontend_tool_node, route_after_chat
+from agent.tools import PYTHON_TOOLS
 
 
 def build_graph():
-    search_subgraph = _build_search_subgraph()
-    main = StateGraph(AgentState)
-    main.add_node("chat_node", chat_node)
-    main.add_node("tools", python_tools_node)
-    main.add_node("search_subgraph", search_subgraph)
-    main.add_conditional_edges(
+    g = StateGraph(AgentState)
+    g.add_node("chat_node", chat_node)
+    g.add_node("tools", ToolNode(PYTHON_TOOLS))
+    g.add_node("frontend_tools", frontend_tool_node)
+    g.add_conditional_edges(
         "chat_node",
         route_after_chat,
-        {"tools": "tools", "search_subgraph": "search_subgraph", "chat_node": "chat_node", "end": END},
+        {"tools": "tools", "frontend_tools": "frontend_tools", "end": END},
     )
-    main.add_edge("tools", "chat_node")
-    main.add_edge("search_subgraph", "chat_node")
-    main.set_entry_point("chat_node")
-    return main.compile()
+    g.add_edge("tools", "chat_node")
+    g.add_edge("frontend_tools", "chat_node")
+    g.set_entry_point("chat_node")
+    return g.compile()
 
 
 graph = build_graph()
