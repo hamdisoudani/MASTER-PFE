@@ -13,7 +13,13 @@ class AgentState(TypedDict, total=False):
     `langgraph.types.interrupt(...)`; the browser executes the mutation and
     resumes with `Command(resume=result)` which becomes the ToolMessage
     content for the next chat turn.
+
+    `stop_reason` is set by `chat_node` at terminal steps so the UI can
+    show WHY the run ended (graceful completion, internal error, user
+    rejection of a tool, etc.) — inspired by OpenAI stop_reasons and
+    open-swe's per-run status chips.
     """
 
     messages: Annotated[list, add_messages]
     editor_context: Optional[dict[str, Any]]
+    stop_reason: Optional[str]

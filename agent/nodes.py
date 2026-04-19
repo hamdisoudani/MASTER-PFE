@@ -286,16 +286,47 @@ def _build_system_prompt(state: AgentState) -> str:
 
 
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    """Run one LLM step.
+
+    Errors raised by the model provider (invalid tool args, auth, rate
+    limit, network) are caught and persisted onto the thread as an
+    AIMessage with `additional_kwargs["error"]`. That way reloading a
+    thread still shows why the run failed, and the UI can render a red
+    chip on the failed turn instead of silently dropping it.
+    `parallel_tool_calls=True` lets the agent batch multiple mutations
+    (e.g. "add these 5 lessons") in a single turn; the frontend tool
+    node iterates over every call in order.
+    """
     llm = get_llm()
     frontend_defs = _frontend_tool_defs(config)
     all_tools: list[Any] = list(PYTHON_TOOLS) + list(frontend_defs)
-    bound = llm.bind_tools(all_tools, parallel_tool_calls=False)
+    bound = llm.bind_tools(all_tools, parallel_tool_calls=True)
 
     messages = _sanitize_for_mistral(list(state.get("messages", [])))
     full_messages = [SystemMessage(content=_build_system_prompt(state))] + messages
 
-    response: AIMessage = await bound.ainvoke(full_messages, config)
-    return {"messages": [response]}
+    try:
+        response: AIMessage = await bound.ainvoke(full_messages, config)
+    except Exception as e:  # noqa: BLE001 — user-visible surfaced errors
+        logger.exception("chat_node LLM call failed")
+        err_payload = {
+            "message": str(e) or repr(e),
+            "type": type(e).__name__,
+        }
+        err_msg = AIMessage(
+            content=(
+                "⚠️ The run failed: "
+                + (err_payload["message"][:500] or err_payload["type"])
+            ),
+            additional_kwargs={"error": err_payload},
+        )
+        return {"messages": [err_msg], "stop_reason": "error"}
+
+    has_tool_calls = bool(getattr(response, "tool_calls", None))
+    out: dict[str, Any] = {"messages": [response]}
+    if not has_tool_calls:
+        out["stop_reason"] = "completed"
+    return out
 
 
 async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
@@ -330,8 +361,17 @@ async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[
         else:
             content = str(resume_value)
         tool_messages.append(ToolMessage(content=content, tool_call_id=tc["id"]))
+        if isinstance(resume_value, dict) and resume_value.get("error") == "user_rejected":
+            rejected = True  # noqa: F841  (flag is picked up below)
 
-    return {"messages": tool_messages}
+    out: dict[str, Any] = {"messages": tool_messages}
+    if any(
+        isinstance(tm.content, str)
+        and '"user_rejected"' in tm.content
+        for tm in tool_messages
+    ):
+        out["stop_reason"] = "interrupted_by_user"
+    return out
 
 
 def route_after_chat(state: AgentState, config: RunnableConfig) -> str:

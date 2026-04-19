@@ -9,7 +9,7 @@ import { useThreadSettingsStore } from "@/stores/thread-settings-store";
 import { useThreads } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { Markdown } from "@/components/chat/Markdown";
-import { AlertCircle, Loader2, RotateCw, Send, Square, Wrench, Zap, ZapOff } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Loader2, OctagonAlert, RotateCw, Send, Square, Wrench, Zap, ZapOff } from "lucide-react";
 import { usePlanStore } from "@/stores/plan-store";
 import { PlanCard } from "@/components/chat/PlanCard";
 import { PlanStrip } from "@/components/chat/PlanStrip";
@@ -294,32 +294,110 @@ function messageText(m: AnyMsg): string {
   try { return JSON.stringify(c, null, 2); } catch { return String(c); }
 }
 
-function toolCallSummary(m: AnyMsg): string | null {
-  const calls = (m.tool_calls as any[]) || [];
-  if (!calls.length) return null;
-  return calls
-    .map((tc) => `${tc.name ?? "tool"}(${Object.keys(tc.args ?? {}).join(", ")})`)
-    .join(", ");
+type ToolCall = { id?: string; name?: string; args?: Record<string, unknown> };
+
+function getToolCalls(m: AnyMsg): ToolCall[] {
+  return ((m.tool_calls as any[]) || []) as ToolCall[];
 }
 
-const MessageBubble = memo(function MessageBubble({ m }: { m: AnyMsg }) {
+function getMessageError(m: AnyMsg): { message?: string; type?: string } | null {
+  const ak: any = (m as any).additional_kwargs ?? (m as any).additionalKwargs;
+  const err = ak?.error;
+  if (!err) return null;
+  if (typeof err === "string") return { message: err };
+  return { message: err.message, type: err.type };
+}
+
+const ToolCallTimeline = memo(function ToolCallTimeline({
+  calls,
+  results,
+}: {
+  calls: ToolCall[];
+  results: Map<string, string>;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!calls.length) return null;
+  return (
+    <div className="mt-2 rounded border border-[var(--border)] bg-[var(--background)]/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1 px-2 py-1 text-[11px] text-[var(--muted-foreground)] hover:bg-[var(--muted)]/40 transition-colors"
+      >
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <Wrench className="h-3 w-3" />
+        <span>
+          {calls.length} tool call{calls.length === 1 ? "" : "s"}:{" "}
+          <code className="font-mono">{calls.map((c) => c.name ?? "tool").join(", ")}</code>
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-[var(--border)] divide-y divide-[var(--border)]">
+          {calls.map((tc, idx) => {
+            const res = tc.id ? results.get(tc.id) : undefined;
+            return (
+              <div key={tc.id ?? idx} className="px-2 py-1.5 space-y-1">
+                <div className="text-[11px] font-mono text-[var(--foreground)]">
+                  {idx + 1}. {tc.name ?? "tool"}
+                </div>
+                {tc.args && Object.keys(tc.args).length > 0 && (
+                  <pre className="whitespace-pre-wrap break-all rounded bg-[var(--muted)]/60 p-1.5 text-[10px] font-mono text-[var(--muted-foreground)]">
+                    {JSON.stringify(tc.args, null, 2).slice(0, 800)}
+                  </pre>
+                )}
+                {res !== undefined && (
+                  <div className="text-[10px] font-mono text-[var(--muted-foreground)]">
+                    <span className="text-[var(--primary)]">→</span>{" "}
+                    {res.length > 200 ? res.slice(0, 200) + "…" : res}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+});
+
+const MessageBubble = memo(function MessageBubble({
+  m,
+  toolResults,
+}: {
+  m: AnyMsg;
+  toolResults: Map<string, string>;
+}) {
   const role = m.type ?? m.role;
   const isUser = role === "human" || role === "user";
   const isTool = role === "tool";
   if (isTool) return null;
   const text = messageText(m);
-  const callSummary = toolCallSummary(m);
-  if (!text && !callSummary) return null;
+  const calls = getToolCalls(m);
+  const msgError = getMessageError(m);
+  if (!text && !calls.length && !msgError) return null;
   return (
     <div
       className={`rounded-md px-3 py-2 ${
         isUser
           ? "bg-[var(--primary)]/10 border border-[var(--primary)]/30 text-[var(--foreground)]"
+          : msgError
+          ? "bg-[var(--muted)] border border-[var(--destructive)]/40 text-[var(--foreground)]"
           : "bg-[var(--muted)] text-[var(--foreground)]"
       }`}
     >
-      <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1">
-        {isUser ? "You" : "Agent"}
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">
+          {isUser ? "You" : "Agent"}
+        </div>
+        {msgError && (
+          <span
+            className="inline-flex items-center gap-1 rounded border border-[var(--destructive)]/40 bg-[var(--destructive)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--destructive)]"
+            title={msgError.message ?? msgError.type ?? "error"}
+          >
+            <AlertCircle className="h-3 w-3" />
+            {msgError.type ?? "error"}
+          </span>
+        )}
       </div>
       {text ? (
         isUser ? (
@@ -328,11 +406,7 @@ const MessageBubble = memo(function MessageBubble({ m }: { m: AnyMsg }) {
           <Markdown source={text} />
         )
       ) : null}
-      {callSummary && (
-        <div className="mt-1 flex items-center gap-1 text-[11px] text-[var(--muted-foreground)]">
-          <Wrench className="h-3 w-3" /> calling <code>{callSummary}</code>
-        </div>
-      )}
+      {calls.length > 0 && <ToolCallTimeline calls={calls} results={toolResults} />}
     </div>
   );
 });
@@ -478,6 +552,19 @@ export function ChatPane() {
 
   const messages = (stream.messages ?? []) as AnyMsg[];
   const isStreaming = stream.isLoading;
+  // Build a tool_call_id -> ToolMessage.content lookup once per render so each
+  // MessageBubble can show the matching result in its collapsible timeline.
+  const toolResults = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of messages) {
+      if ((m.type ?? m.role) !== "tool") continue;
+      const id = (m as any).tool_call_id as string | undefined;
+      if (!id) continue;
+      map.set(id, messageText(m));
+    }
+    return map;
+  }, [messages]);
+  const stopReason = ((stream as any).values?.stop_reason ?? null) as string | null;
   // useStream surfaces the last run error here (network, tool-call JSON, LLM
   // API 4xx/5xx, etc.). We render it inline so the thread doesn't silently
   // stall and give the user a one-click retry of their last user turn.
@@ -691,6 +778,7 @@ export function ChatPane() {
               streaming…
             </span>
           )}
+          {!isStreaming && stopReason && <StopReasonChip reason={stopReason} />}
           <button
             type="button"
             onClick={onToggleAutoAccept}
@@ -714,7 +802,7 @@ export function ChatPane() {
         </span>
       </div>
     );
-  }, [threadId, isStreaming, autoAccept, onToggleAutoAccept]);
+  }, [threadId, isStreaming, autoAccept, onToggleAutoAccept, stopReason]);
 
   return (
     <div className="flex h-full flex-col bg-[var(--card)] text-[var(--foreground)] border-l border-[var(--border)]">
@@ -736,7 +824,7 @@ export function ChatPane() {
           </div>
         )}
         {messages.map((m, i) => (
-          <MessageBubble key={visibleKey(m, i)} m={m} />
+          <MessageBubble key={visibleKey(m, i)} m={m} toolResults={toolResults} />
         ))}
         {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks"]).has(interruptValue.name) && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
         {streamError && !isStreaming && (
@@ -846,3 +934,47 @@ function ErrorBubble({ error, onRetry }: { error: unknown; onRetry: () => void }
   );
 }
 
+function StopReasonChip({ reason }: { reason: string }) {
+  const map: Record<string, { label: string; icon: any; cls: string }> = {
+    completed: {
+      label: "completed",
+      icon: CheckCircle2,
+      cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-500",
+    },
+    error: {
+      label: "error",
+      icon: AlertCircle,
+      cls: "border-[var(--destructive)]/40 bg-[var(--destructive)]/10 text-[var(--destructive)]",
+    },
+    interrupted_by_user: {
+      label: "rejected",
+      icon: OctagonAlert,
+      cls: "border-amber-500/40 bg-amber-500/10 text-amber-500",
+    },
+    tool_budget_exhausted: {
+      label: "tool budget",
+      icon: OctagonAlert,
+      cls: "border-amber-500/40 bg-amber-500/10 text-amber-500",
+    },
+    max_steps: {
+      label: "max steps",
+      icon: OctagonAlert,
+      cls: "border-amber-500/40 bg-amber-500/10 text-amber-500",
+    },
+  };
+  const cfg = map[reason] ?? {
+    label: reason,
+    icon: AlertCircle,
+    cls: "border-[var(--border)] bg-[var(--muted)] text-[var(--muted-foreground)]",
+  };
+  const Icon = cfg.icon;
+  return (
+    <span
+      title={`stop_reason: ${reason}`}
+      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${cfg.cls}`}
+    >
+      <Icon className="h-3 w-3" />
+      {cfg.label}
+    </span>
+  );
+}
