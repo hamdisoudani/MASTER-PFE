@@ -44,20 +44,29 @@ export function ThreadHistory() {
   };
 
   return (
-    <div className="flex h-full flex-col border-r border-neutral-800 bg-neutral-950 text-neutral-100 text-sm">
-      <div className="flex items-center gap-1 border-b border-neutral-800 p-2">
-        <button onClick={onNew} className="flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-xs hover:bg-blue-500">
+    <div className="flex h-full flex-col border-r border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] text-sm">
+      <div className="flex items-center gap-1 border-b border-[var(--border)] px-2 py-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)] mr-auto">Threads</p>
+        <button
+          onClick={onNew}
+          className="flex items-center gap-1 rounded-md bg-[var(--primary)] text-[var(--primary-foreground)] px-2 py-1 text-xs font-medium hover:opacity-90 transition-opacity"
+          title="New thread"
+        >
           <Plus className="h-3 w-3" /> New
         </button>
-        <button onClick={() => refreshThreads()} className="rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700">
+        <button
+          onClick={() => refreshThreads()}
+          className="rounded-md bg-[var(--muted)] text-[var(--muted-foreground)] px-2 py-1 text-xs hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] transition-colors"
+          title="Refresh"
+        >
           <RefreshCcw className={`h-3 w-3 ${isValidating ? "animate-spin" : ""}`} />
         </button>
-        <span className="ml-auto text-[10px] opacity-50">{threads.length}</span>
+        <span className="text-[10px] text-[var(--muted-foreground)] opacity-70 tabular-nums ml-1">{threads.length}</span>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {isLoading && <div className="p-2 text-xs opacity-60">Loading threads...</div>}
+        {isLoading && <div className="p-3 text-xs text-[var(--muted-foreground)]">Loading threads…</div>}
         {!isLoading && threads.length === 0 && (
-          <div className="p-2 text-xs opacity-60">No threads yet. Click New.</div>
+          <div className="p-3 text-xs text-[var(--muted-foreground)]">No threads yet. Click <span className="text-[var(--primary)] font-medium">New</span>.</div>
         )}
         {threads.map((t: any) => {
           const active = t.thread_id === threadId;
@@ -65,19 +74,21 @@ export function ThreadHistory() {
             <div
               key={t.thread_id}
               onClick={() => onPick(t.thread_id)}
-              className={`group flex cursor-pointer items-start gap-2 border-b border-neutral-900 px-2 py-2 hover:bg-neutral-900 ${
-                active ? "bg-neutral-900" : ""
+              className={`group flex cursor-pointer items-start gap-2 border-b border-[var(--border)] px-3 py-2 transition-colors ${
+                active
+                  ? "bg-[var(--accent)] text-[var(--accent-foreground)] border-l-2 border-l-[var(--primary)]"
+                  : "hover:bg-[var(--muted)]"
               }`}
             >
               <div className="flex-1 min-w-0">
-                <div className="truncate">{firstUserPreview(t)}</div>
-                <div className="text-[10px] opacity-40">
+                <div className="truncate text-[var(--foreground)]">{firstUserPreview(t)}</div>
+                <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
                   {t.thread_id.slice(0, 8)} · {t.status ?? "idle"}
                 </div>
               </div>
               <button
                 onClick={(e) => onDelete(e, t.thread_id)}
-                className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-red-400"
+                className="opacity-0 group-hover:opacity-100 text-[var(--muted-foreground)] hover:text-[var(--destructive)] transition-opacity"
                 title="Delete"
               >
                 <Trash2 className="h-3 w-3" />

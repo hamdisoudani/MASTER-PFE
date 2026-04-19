@@ -11,7 +11,7 @@ const SyllabusViewerClient = dynamic(
 export default function ClientPage() {
   return (
     <ThreadProvider refreshInterval={15000}>
-      <main>
+      <main className="h-screen w-screen overflow-hidden bg-background text-foreground">
         <SyllabusViewerClient />
       </main>
     </ThreadProvider>

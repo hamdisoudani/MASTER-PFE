@@ -10,15 +10,15 @@ export default function SyllabusViewerClient() {
   const { getActiveLesson } = useSyllabusStore();
   const activeLesson = getActiveLesson();
   return (
-    <PanelGroup direction="horizontal" className="h-screen w-screen">
+    <PanelGroup direction="horizontal" className="h-full w-full bg-background text-foreground">
       <Panel defaultSize={14} minSize={10}><ThreadHistory /></Panel>
-      <PanelResizeHandle className="w-px bg-neutral-800" />
+      <PanelResizeHandle className="w-px bg-[var(--border)] hover:bg-[var(--primary)] transition-colors" />
       <Panel defaultSize={16} minSize={10}><FileTree /></Panel>
-      <PanelResizeHandle className="w-px bg-neutral-800" />
+      <PanelResizeHandle className="w-px bg-[var(--border)] hover:bg-[var(--primary)] transition-colors" />
       <Panel defaultSize={44} minSize={25}>
         {activeLesson ? <BlockNoteEditor lessonId={activeLesson.id} initialContent={activeLesson.content} /> : <EmptyEditorState />}
       </Panel>
-      <PanelResizeHandle className="w-px bg-neutral-800" />
+      <PanelResizeHandle className="w-px bg-[var(--border)] hover:bg-[var(--primary)] transition-colors" />
       <Panel defaultSize={26} minSize={18}><ChatPane /></Panel>
     </PanelGroup>
   );
