@@ -1,8 +1,6 @@
 "use client";
 import { useStream } from "@langchain/langgraph-sdk/react";
-import { ASSISTANT_ID } from "@/providers/client";
-
-const AGENT_URL = "https://agent-production-43c3.up.railway.app";
+import { ASSISTANT_ID, LANGGRAPH_API_URL, langgraphHeaders } from "@/providers/client";
 
 type StreamOpts = {
   threadId?: string | null;
@@ -11,17 +9,17 @@ type StreamOpts = {
 
 export function useSyllabusAgent({ threadId, onThreadId }: StreamOpts = {}) {
   const base = {
-    apiUrl: process.env.NEXT_PUBLIC_LANGGRAPH_URL ?? AGENT_URL,
+    apiUrl: LANGGRAPH_API_URL,
     assistantId: ASSISTANT_ID,
     messagesKey: "messages" as const,
     reconnectOnMount: true,
     fetchStateHistory: true,
+    defaultHeaders: langgraphHeaders(),
     onThreadId,
   };
   // IMPORTANT: omit the `threadId` key entirely when we don't have one, so the
   // SDK's `useControllableThreadId` falls back to uncontrolled mode and the
-  // thread it auto-creates on the first submit is used for subsequent submits
-  // (instead of resetting to null on every render and creating a new thread).
+  // thread auto-created on first submit sticks.
   const options = threadId ? { ...base, threadId } : base;
   return useStream<{ messages: any[] }>(options as any);
 }

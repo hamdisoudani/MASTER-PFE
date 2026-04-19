@@ -827,10 +827,10 @@ export function ChatPane() {
   }, [messages.length, isStreaming]);
 
   const [resumeBusy, setResumeBusy] = useState(false);
-  const handledIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!interruptValue) handledIdRef.current = null;
-  }, [interruptValue]);
+  // Track all handled interrupt ids to avoid double-handling on re-renders.
+  // Using a Set (not a single string) prevents races between the auto-accept
+  // effect and the sync onApprove/onReject guards.
+  const handledIdsRef = useRef<Set<string>>(new Set());
 
   const resumeWith = useCallback(
     (result: any) => {
@@ -857,8 +857,8 @@ export function ChatPane() {
 
   const onApprove = useCallback(async () => {
     if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
-    if (handledIdRef.current === interruptValue.tool_call_id) return;
-    handledIdRef.current = interruptValue.tool_call_id;
+    if (handledIdsRef.current.has(interruptValue.tool_call_id)) return;
+    handledIdsRef.current.add(interruptValue.tool_call_id);
     setResumeBusy(true);
     const { name, args } = interruptValue;
     const a = (args ?? {}) as any;
@@ -905,8 +905,8 @@ export function ChatPane() {
 
   const onReject = useCallback(() => {
     if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
-    if (handledIdRef.current === interruptValue.tool_call_id) return;
-    handledIdRef.current = interruptValue.tool_call_id;
+    if (handledIdsRef.current.has(interruptValue.tool_call_id)) return;
+    handledIdsRef.current.add(interruptValue.tool_call_id);
     resumeWith({ ok: false, error: "user_rejected", message: "User rejected this tool call." });
   }, [interruptValue, resumeWith]);
 
@@ -916,7 +916,7 @@ export function ChatPane() {
   const READ_ONLY_TOOL_NAMES = new Set(["getSyllabusOutline", "readLessonBlocks"]);
   useEffect(() => {
     if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
-    if (handledIdRef.current === interruptValue.tool_call_id) return;
+    if (handledIdsRef.current.has(interruptValue.tool_call_id)) return;
     if (resumeBusy) return;
     const isReadOnly = READ_ONLY_TOOL_NAMES.has(interruptValue.name);
     if (!isReadOnly && !autoAccept) return;
@@ -956,9 +956,28 @@ export function ChatPane() {
   }, [isStreaming, messages, submitUserText]);
 
   const onStop = useCallback(async () => {
-    const runId = (stream as any).values?.run_id as string | undefined;
-    if (threadId && runId) await cancel(threadId, runId);
-    (stream as any).stop?.();
+    // SDK exposes the active run id at `stream.runId` or `stream.meta?.runId`
+    // depending on version; fall back to cancelling ALL runs on the thread.
+    const sAny = stream as any;
+    const runId = sAny.runId ?? sAny.meta?.runId ?? sAny.values?.run_id;
+    try {
+      if (threadId && runId) {
+        await cancel(threadId, runId);
+      } else if (threadId) {
+        const { getLangGraphClient } = await import("@/providers/client");
+        const client = getLangGraphClient();
+        const runs = await client.threads.getState(threadId).catch(() => null);
+        void runs;
+        try {
+          // @ts-ignore — cancelAll exists on recent SDKs
+          if (typeof client.runs.cancelAll === "function") {
+            await (client.runs as any).cancelAll(threadId, true);
+          }
+        } catch {}
+      }
+    } finally {
+      sAny.stop?.();
+    }
   }, [stream, threadId, cancel]);
 
   const onKey = useCallback(
