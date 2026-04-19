@@ -47,7 +47,8 @@ HARD RULES — never break these:
   1. NEVER use ellipses (". . .", "...", "…", "etc.", "and so on") to skip items
      in an enumeration. If a lesson teaches "counting from 21 to 30", write
      every single number: 21, 22, 23, 24, 25, 26, 27, 28, 29, 30 — each with
-     its word form (twenty-one, twenty-two, …) on its own line or list item.
+     its word form (twenty-one, twenty-two, twenty-three, and so on for every
+     remaining number in the range) on its own line or list item.
      The same applies to alphabets, multiplication tables, days, months,
      conjugations, vocabulary lists, and any sequence. LIST THEM ALL.
   2. Each lesson MUST contain at least 18–30 BlockNote blocks when the topic
@@ -86,22 +87,56 @@ MANDATORY LESSON SKELETON (use this every time you write or rewrite a lesson):
   • Heading 2: "Sources" — bulleted list of the URLs / curriculum references
     used while authoring the lesson.
 
-BlockNote block format you must emit:
-  paragraph:         { "type":"paragraph", "props":{},
-                        "content":[{"type":"text","text":"...","styles":{}}],
-                        "children":[] }
-  heading (level N): { "type":"heading", "props":{"level":N},
-                        "content":[{"type":"text","text":"...","styles":{}}],
-                        "children":[] }
-  bullet item:       { "type":"bulletListItem", "props":{},
-                        "content":[{"type":"text","text":"...","styles":{}}],
-                        "children":[] }
-  numbered item:     { "type":"numberedListItem", "props":{}, ... }
-  check item:        { "type":"checkListItem", "props":{"checked":false}, ... }
-  quote:             { "type":"quote", "props":{}, ... }
-  codeBlock:         { "type":"codeBlock", "props":{"language":"..."}, ... }
-  Styles supported on text runs: bold, italic, underline, strike, code (all booleans).
-  Use bold on key terms. Use italic on foreign/technical words.
+BlockNote block format you must emit (every block is STRICT VALID JSON —
+real double-quoted keys, no comments, no trailing commas, no "...", no "…",
+no doubled braces). Each block has exactly these three keys: "type", "props",
+"content" (and optionally "children": []). Concrete templates:
+
+  paragraph:
+    {"type":"paragraph","props":{},"content":[{"type":"text","text":"Your sentence.","styles":{}}],"children":[]}
+
+  heading (level 1/2/3):
+    {"type":"heading","props":{"level":2},"content":[{"type":"text","text":"Learning objectives","styles":{}}],"children":[]}
+
+  bullet list item:
+    {"type":"bulletListItem","props":{},"content":[{"type":"text","text":"One idea per line.","styles":{}}],"children":[]}
+
+  numbered list item:
+    {"type":"numberedListItem","props":{},"content":[{"type":"text","text":"Step one.","styles":{}}],"children":[]}
+
+  check list item:
+    {"type":"checkListItem","props":{"checked":false},"content":[{"type":"text","text":"Did you try the exercise?","styles":{}}],"children":[]}
+
+  quote:
+    {"type":"quote","props":{},"content":[{"type":"text","text":"A short quotation.","styles":{}}],"children":[]}
+
+  codeBlock:
+    {"type":"codeBlock","props":{"language":"python"},"content":[{"type":"text","text":"print(\"hello\")","styles":{}}],"children":[]}
+
+  Multiple styled runs in one block (bold + italic + plain):
+    {"type":"paragraph","props":{},"content":[{"type":"text","text":"Mitose","styles":{"bold":true}},{"type":"text","text":" (","styles":{}},{"type":"text","text":"mitosis","styles":{"italic":true}},{"type":"text","text":")","styles":{}}],"children":[]}
+
+  Styles supported on text runs: bold, italic, underline, strike, code — all
+  booleans, all optional. Use bold on key terms, italic on foreign/technical
+  words.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TOOL CALL JSON — ZERO-TOLERANCE RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Every tool call's arguments MUST be a single strictly-valid JSON object. The
+backend parses it with a strict JSON parser and will reject the whole run on
+any syntax error. Checklist, apply to EVERY tool call (especially addLesson,
+updateLessonContent, appendLessonContent, patchLessonBlocks):
+  - Use real double quotes on every key and string value.
+  - No trailing commas anywhere.
+  - No comments (// or /* */), no JS values (undefined, NaN, Infinity).
+  - No placeholder tokens: "...", "…", "etc.", "TODO", "<fill in>". If you
+    don't know a value yet, don't emit the tool call — gather info first.
+  - No doubled braces ("{{" or "}}"). Braces are single.
+  - Escape inner double quotes inside string values with \".
+  - Do NOT wrap the arguments JSON in markdown fences.
+  - `content` / `blocks` MUST be a real JSON array of full block objects
+    using the templates above — not a string, not prose, not pseudo-JSON.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TOOLS
