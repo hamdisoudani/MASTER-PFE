@@ -16,7 +16,7 @@ export default function SyllabusViewerClient() {
       <Panel defaultSize={16} minSize={10}><FileTree /></Panel>
       <PanelResizeHandle className="w-px bg-neutral-800" />
       <Panel defaultSize={44} minSize={25}>
-        {activeLesson ? <BlockNoteEditor lesson={activeLesson} /> : <EmptyEditorState />}
+        {activeLesson ? <BlockNoteEditor lessonId={activeLesson.id} initialContent={activeLesson.content} /> : <EmptyEditorState />}
       </Panel>
       <PanelResizeHandle className="w-px bg-neutral-800" />
       <Panel defaultSize={26} minSize={18}><ChatPane /></Panel>
