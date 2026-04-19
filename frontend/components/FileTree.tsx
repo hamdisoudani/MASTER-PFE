@@ -288,6 +288,16 @@ function LessonNode({ lesson, isActive, confirmDelete, onSelect, onDelete, onCan
     >
       <FileText className="w-3 h-3 shrink-0" />
       <span className="truncate flex-1">{lesson.title}</span>
+      <span
+        className={`ml-1 mr-1 shrink-0 rounded px-1.5 py-0 text-[10px] tabular-nums leading-4 ${
+          (lesson.content?.length ?? 0) === 0
+            ? "bg-[var(--muted)]/10 text-[var(--muted)] opacity-60"
+            : "bg-[var(--primary)]/10 text-[var(--primary)]"
+        }`}
+        title={`${lesson.content?.length ?? 0} blocks`}
+      >
+        {lesson.content?.length ?? 0}
+      </span>
 
       {isConfirming ? (
         <span className="flex items-center gap-0.5 ml-auto" onClick={(e) => e.stopPropagation()}>

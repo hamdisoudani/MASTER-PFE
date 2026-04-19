@@ -36,7 +36,7 @@ export default function SyllabusViewerClient() {
   const [tab, setTab] = useState<MobileTab>("chat");
 
   const editorPane = activeLesson ? (
-    <BlockNoteEditor lessonId={activeLesson.id} initialContent={activeLesson.content} />
+    <BlockNoteEditor key={activeLesson.id} lessonId={activeLesson.id} initialContent={activeLesson.content} />
   ) : (
     <EmptyEditorState />
   );

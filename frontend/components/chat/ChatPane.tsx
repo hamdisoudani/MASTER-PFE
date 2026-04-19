@@ -12,6 +12,7 @@ import { Markdown } from "@/components/chat/Markdown";
 import { Loader2, Send, Square, Wrench, Zap, ZapOff } from "lucide-react";
 import { usePlanStore } from "@/stores/plan-store";
 import { PlanCard } from "@/components/chat/PlanCard";
+import { PlanStrip } from "@/components/chat/PlanStrip";
 
 type AnyMsg = {
   id?: string;
@@ -582,13 +583,13 @@ export function ChatPane() {
             {threadId ? "No messages yet. Say hi 👋" : "Start a new thread to chat with the syllabus agent."}
           </div>
         )}
-        <PlanCard />
         {messages.map((m, i) => (
           <MessageBubble key={visibleKey(m, i)} m={m} />
         ))}
         {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks"]).has(interruptValue.name) && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
         <div ref={endRef} />
       </div>
+      <PlanStrip />
       <div className="border-t border-[var(--border)] p-2 flex gap-2 bg-[var(--background)]">
         <textarea
           className="flex-1 resize-none rounded-md bg-[var(--input)] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] p-2 text-base md:text-sm outline-none border border-[var(--border)] focus:border-[var(--ring)] transition-colors"
