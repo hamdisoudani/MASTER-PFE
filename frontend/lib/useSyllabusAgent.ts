@@ -10,15 +10,18 @@ type StreamOpts = {
 };
 
 export function useSyllabusAgent({ threadId, onThreadId }: StreamOpts = {}) {
-  return useStream<{ messages: any[] }>({
+  const base = {
     apiUrl: process.env.NEXT_PUBLIC_LANGGRAPH_URL ?? AGENT_URL,
     assistantId: ASSISTANT_ID,
-    threadId: threadId ?? undefined,
-    messagesKey: "messages",
+    messagesKey: "messages" as const,
     reconnectOnMount: true,
     fetchStateHistory: true,
-    onThreadId: (id: string) => {
-      onThreadId?.(id);
-    },
-  });
+    onThreadId,
+  };
+  // IMPORTANT: omit the `threadId` key entirely when we don't have one, so the
+  // SDK's `useControllableThreadId` falls back to uncontrolled mode and the
+  // thread it auto-creates on the first submit is used for subsequent submits
+  // (instead of resetting to null on every render and creating a new thread).
+  const options = threadId ? { ...base, threadId } : base;
+  return useStream<{ messages: any[] }>(options as any);
 }

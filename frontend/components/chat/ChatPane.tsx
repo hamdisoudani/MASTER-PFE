@@ -230,7 +230,7 @@ export function ChatPane() {
       </div>
       <div className="border-t border-[var(--border)] p-2 flex gap-2 bg-[var(--background)]">
         <textarea
-          className="flex-1 resize-none rounded-md bg-[var(--input)] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] p-2 text-sm outline-none border border-[var(--border)] focus:border-[var(--ring)] transition-colors"
+          className="flex-1 resize-none rounded-md bg-[var(--input)] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] p-2 text-base md:text-sm outline-none border border-[var(--border)] focus:border-[var(--ring)] transition-colors"
           rows={2}
           value={input}
           onChange={(e) => setInput(e.target.value)}
