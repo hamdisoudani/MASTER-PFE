@@ -269,7 +269,19 @@ export function ChatPane() {
   const resumeWith = useCallback(
     (result: any) => {
       try {
-        (stream as any).submit(undefined, { command: { resume: result } });
+        // IMPORTANT: resume submits MUST re-send the frontend tool schemas via
+        // `config.configurable.frontend_tools`. The agent's chat_node rebuilds
+        // the bound tool list from this config on every step, and
+        // route_after_chat classifies tool calls against this same list. If we
+        // omit it on resume, the next chat_node turn runs without any frontend
+        // tools bound, so the LLM can't chain another mutation and the router
+        // short-circuits to END — which looks like "the graph stopped after
+        // approve". Passing the same config as the initial submit keeps the
+        // ReAct loop alive until the agent produces a final text reply.
+        (stream as any).submit(undefined, {
+          command: { resume: result },
+          config: { configurable: { frontend_tools: FRONTEND_TOOLS } },
+        });
       } catch (e) {
         console.error("resume failed", e);
       }
