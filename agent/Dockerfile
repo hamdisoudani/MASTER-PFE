@@ -15,4 +15,5 @@ ENV PORT=2024
 ENV PYTHONUNBUFFERED=1
 EXPOSE 2024
 
-CMD ["sh", "-c", "langgraph dev --host 0.0.0.0 --port ${PORT} --no-browser --allow-blocking"]
+ENTRYPOINT []
+CMD ["sh", "-c", "exec langgraph dev --host 0.0.0.0 --port ${PORT:-2024} --no-browser --allow-blocking"]
