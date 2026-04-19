@@ -39,16 +39,31 @@ export interface Syllabus {
   createdAt: string;
 }
 
+/**
+ * Diff record captured by each agent-driven mutation so the tool card can
+ * render an old-vs-new view even after the store has already been updated.
+ */
+export interface LessonMutation {
+  op: 'replace' | 'append';
+  previous: Block[];
+  next: Block[];
+  at: string;
+  error?: string | null;
+}
+
 interface SyllabusStore {
   syllabi: Syllabus[];
   activeSyllabusId: string | null;
   activeItemId: string | null;
   renderErrors: Record<string, string>;
+  lastMutation: Record<string, LessonMutation>;
 
   createSyllabus: (id: string, title: string, subject: string, description?: string) => void;
   addChapter: (syllabusId: string, chapterId: string, title: string, description?: string) => void;
   addLesson: (chapterId: string, lessonId: string, title: string, content: Block[]) => void;
   updateLessonContent: (lessonId: string, content: Block[]) => void;
+  appendLessonContent: (lessonId: string, blocks: Block[]) => void;
+  recordMutation: (lessonId: string, mutation: LessonMutation) => void;
   removeSyllabus: (syllabusId: string) => void;
   removeChapter: (chapterId: string) => void;
   removeLesson: (lessonId: string) => void;
@@ -56,6 +71,7 @@ interface SyllabusStore {
   toggleChapter: (chapterId: string) => void;
   setActiveSyllabus: (id: string) => void;
   setRenderError: (lessonId: string, error: string | null) => void;
+  getLessonById: (lessonId: string) => Lesson | null;
   getActiveLesson: () => Lesson | null;
   getActiveSyllabus: () => Syllabus | null;
 }
@@ -67,6 +83,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
       activeSyllabusId: null,
       activeItemId: null,
       renderErrors: {},
+      lastMutation: {},
 
       createSyllabus: (id, title, subject, description) =>
         set((state) => ({
@@ -138,6 +155,26 @@ export const useSyllabusStore = create<SyllabusStore>()(
           })),
         })),
 
+      appendLessonContent: (lessonId, blocks) =>
+        set((state) => ({
+          syllabi: state.syllabi.map((s) => ({
+            ...s,
+            chapters: s.chapters.map((ch) => ({
+              ...ch,
+              lessons: ch.lessons.map((l) =>
+                l.id === lessonId
+                  ? { ...l, content: [...(l.content || []), ...blocks] }
+                  : l
+              ),
+            })),
+          })),
+        })),
+
+      recordMutation: (lessonId, mutation) =>
+        set((state) => ({
+          lastMutation: { ...state.lastMutation, [lessonId]: mutation },
+        })),
+
       removeSyllabus: (syllabusId) =>
         set((state) => ({
           syllabi: state.syllabi.filter((s) => s.id !== syllabusId),
@@ -207,6 +244,17 @@ export const useSyllabusStore = create<SyllabusStore>()(
           }
           return { renderErrors: errors };
         }),
+
+      getLessonById: (lessonId) => {
+        const { syllabi } = get();
+        for (const s of syllabi) {
+          for (const ch of s.chapters) {
+            const l = ch.lessons.find((x) => x.id === lessonId);
+            if (l) return l;
+          }
+        }
+        return null;
+      },
 
       getActiveLesson: () => {
         const { syllabi, activeItemId } = get();

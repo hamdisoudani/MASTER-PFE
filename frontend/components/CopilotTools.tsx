@@ -3,10 +3,11 @@
 import React from "react";
 import { useCopilotAction, useCopilotReadable } from "@copilotkit/react-core";
 import { useSyllabusStore } from "@/store/syllabusStore";
-import type { Block, Lesson, Chapter, Syllabus } from "@/store/syllabusStore";
-import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
+import type { Block, Lesson, Chapter, Syllabus, LessonMutation } from "@/store/syllabusStore";
+import { validateBlockNoteContent } from "@/lib/blocknoteValidate";
+import { CheckCircle2, Loader2, AlertTriangle, Plus, Minus } from "lucide-react";
 
-function ToolCallCard({ title, status, args, error }: { title: string; status: "inProgress" | "executing" | "complete" | string; args?: Record<string, unknown>; error?: string | null; }) {
+function ToolCallCard({ title, status, args, error, children }: { title: string; status: "inProgress" | "executing" | "complete" | string; args?: Record<string, unknown>; error?: string | null; children?: React.ReactNode }) {
   const isRunning = status === "inProgress" || status === "executing";
   const isDone = status === "complete";
   return (
@@ -46,14 +47,115 @@ function ToolCallCard({ title, status, args, error }: { title: string; status: "
         >{JSON.stringify(args, null, 2)}</pre>
       )}
       {error && (<p className="mt-1 text-[10px]" style={{ color: "var(--destructive)" }}>{error}</p>)}
+      {children}
     </div>
   );
 }
 
+/** Extract a short preview string from a BlockNote block's inline content. */
+function blockPreview(b: Block | undefined): string {
+  if (!b) return "";
+  const c = b.content;
+  if (Array.isArray(c)) {
+    const parts: string[] = [];
+    for (const piece of c) {
+      if (piece && typeof piece === "object" && "text" in piece && typeof (piece as { text: unknown }).text === "string") {
+        parts.push((piece as { text: string }).text);
+      }
+    }
+    return parts.join(" ").trim();
+  }
+  return "";
+}
+
 /**
- * Approximate size of a BlockNote block tree (character count of inline text).
- * Used so the agent can decide whether to fetch full lesson content.
+ * Render a git-style diff of two block arrays. Matches by block.id when
+ * present, otherwise by positional index. This is a visual aid, not a
+ * semantic merge — the actual mutation is always the full next[].
  */
+function BlockDiff({ previous, next }: { previous: Block[]; next: Block[] }) {
+  const prevIds = new Set(previous.map((b) => b.id).filter(Boolean));
+  const nextIds = new Set(next.map((b) => b.id).filter(Boolean));
+  type Row = { kind: "same" | "add" | "del" | "mod"; prev?: Block; next?: Block };
+  const rows: Row[] = [];
+  const max = Math.max(previous.length, next.length);
+  for (let i = 0; i < max; i++) {
+    const p = previous[i];
+    const n = next[i];
+    if (p && n) {
+      const prevText = blockPreview(p);
+      const nextText = blockPreview(n);
+      if (p.id && n.id && p.id === n.id && prevText === nextText) rows.push({ kind: "same", prev: p, next: n });
+      else if (prevText === nextText && p.type === n.type) rows.push({ kind: "same", prev: p, next: n });
+      else rows.push({ kind: "mod", prev: p, next: n });
+    } else if (p && !n) {
+      rows.push({ kind: "del", prev: p });
+    } else if (!p && n) {
+      const isExistingMoved = n.id && prevIds.has(n.id) && !nextIds.has(n.id);
+      rows.push({ kind: isExistingMoved ? "same" : "add", next: n });
+    }
+  }
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-2 border rounded-[3px] overflow-hidden" style={{ borderColor: "var(--border)" }}>
+      <div className="text-[9px] uppercase tracking-[0.12em] px-2 py-1" style={{ fontFamily: "var(--font-mono)", color: "var(--muted-foreground)", background: "color-mix(in srgb, var(--muted) 60%, transparent)" }}>
+        diff · {rows.filter((r) => r.kind === "add").length} added · {rows.filter((r) => r.kind === "del").length} removed · {rows.filter((r) => r.kind === "mod").length} modified
+      </div>
+      <div className="max-h-56 overflow-auto">
+        {rows.map((r, i) => {
+          if (r.kind === "same") {
+            return (
+              <div key={i} className="flex gap-1 px-2 py-0.5 text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--muted-foreground)" }}>
+                <span className="opacity-40 w-3 shrink-0">·</span>
+                <span className="truncate">[{r.next?.type}] {blockPreview(r.next).slice(0, 120)}</span>
+              </div>
+            );
+          }
+          if (r.kind === "add") {
+            return (
+              <div key={i} className="flex gap-1 px-2 py-0.5 text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--secondary)", background: "color-mix(in srgb, var(--secondary) 10%, transparent)" }}>
+                <Plus className="w-3 h-3 shrink-0" />
+                <span className="truncate">[{r.next?.type}] {blockPreview(r.next).slice(0, 140)}</span>
+              </div>
+            );
+          }
+          if (r.kind === "del") {
+            return (
+              <div key={i} className="flex gap-1 px-2 py-0.5 text-[10px] line-through" style={{ fontFamily: "var(--font-mono)", color: "var(--destructive)", background: "color-mix(in srgb, var(--destructive) 10%, transparent)" }}>
+                <Minus className="w-3 h-3 shrink-0" />
+                <span className="truncate">[{r.prev?.type}] {blockPreview(r.prev).slice(0, 140)}</span>
+              </div>
+            );
+          }
+          return (
+            <div key={i} className="px-2 py-0.5">
+              <div className="flex gap-1 text-[10px] line-through" style={{ fontFamily: "var(--font-mono)", color: "var(--destructive)", background: "color-mix(in srgb, var(--destructive) 10%, transparent)" }}>
+                <Minus className="w-3 h-3 shrink-0" />
+                <span className="truncate">[{r.prev?.type}] {blockPreview(r.prev).slice(0, 140)}</span>
+              </div>
+              <div className="flex gap-1 text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--secondary)", background: "color-mix(in srgb, var(--secondary) 10%, transparent)" }}>
+                <Plus className="w-3 h-3 shrink-0" />
+                <span className="truncate">[{r.next?.type}] {blockPreview(r.next).slice(0, 140)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LessonDiffCard({ lessonId, title, status, args }: { lessonId?: string; title: string; status: string; args?: Record<string, unknown> }) {
+  const mutation: LessonMutation | undefined = useSyllabusStore((s) => (lessonId ? s.lastMutation[lessonId] : undefined));
+  const preview = args ? { lessonId: args.lessonId, blocks: Array.isArray(args.content) ? (args.content as unknown[]).length : 0 } : undefined;
+  const err = mutation?.error ?? null;
+  return (
+    <ToolCallCard title={title} status={status} args={preview as Record<string, unknown> | undefined} error={err}>
+      {mutation && !err && <BlockDiff previous={mutation.previous} next={mutation.next} />}
+    </ToolCallCard>
+  );
+}
+
 function approxLessonSize(blocks: Block[] | undefined): number {
   if (!blocks || blocks.length === 0) return 0;
   let n = 0;
@@ -71,10 +173,6 @@ function approxLessonSize(blocks: Block[] | undefined): number {
   return n;
 }
 
-/**
- * Build a tiny skeleton of all syllabi. Only ids/titles/counts — NEVER content.
- * This replaces the previous pattern of shipping the entire Zustand store on every request.
- */
 function buildSkeleton(syllabi: Syllabus[], activeSyllabusId: string | null, activeItemId: string | null) {
   return {
     activeSyllabusId,
@@ -107,12 +205,12 @@ export function CopilotTools() {
   const addChapter = useSyllabusStore((s) => s.addChapter);
   const addLesson = useSyllabusStore((s) => s.addLesson);
   const updateLessonContent = useSyllabusStore((s) => s.updateLessonContent);
+  const appendLessonContent = useSyllabusStore((s) => s.appendLessonContent);
+  const recordMutation = useSyllabusStore((s) => s.recordMutation);
   const removeChapter = useSyllabusStore((s) => s.removeChapter);
   const removeLesson = useSyllabusStore((s) => s.removeLesson);
   const setRenderError = useSyllabusStore((s) => s.setRenderError);
 
-  // SKELETON ONLY — metadata + counts, no BlockNote content.
-  // Keeps the CopilotKit request body small so we don't hit the NestJS body limit.
   useCopilotReadable({
     description:
       "Skeleton of all syllabi (ids, titles, chapter/lesson metadata, block counts). " +
@@ -121,14 +219,12 @@ export function CopilotTools() {
     value: buildSkeleton(syllabi, activeSyllabusId, activeItemId),
   });
 
-  // On-demand lesson reader. Agents call this when they actually need content
-  // for a specific lesson, instead of us shipping every lesson every turn.
   useCopilotAction({
     name: "read_lesson",
     description:
       "Read the full BlockNote content of a single lesson by id. " +
-      "Use the skeleton (from the readable) to discover lessonIds first. " +
-      "Optionally pass a line/block range to fetch only a slice of the lesson.",
+      "ALSO use this after calling `add_lesson`, `update_lesson_content`, or `append_lesson_content` " +
+      "to verify the content was persisted correctly.",
     parameters: [
       { name: "lessonId", type: "string", description: "Id of the lesson to read" },
       { name: "from", type: "number", description: "Optional start block index (inclusive, 0-based)", required: false },
@@ -136,26 +232,16 @@ export function CopilotTools() {
     ],
     handler: ({ lessonId, from, to }) => {
       const state = useSyllabusStore.getState();
-      let found: Lesson | null = null;
-      let parentChapterId: string | null = null;
-      let parentSyllabusId: string | null = null;
-      for (const s of state.syllabi) {
-        for (const c of s.chapters) {
-          const l = c.lessons.find((x) => x.id === lessonId);
-          if (l) { found = l; parentChapterId = c.id; parentSyllabusId = s.id; break; }
-        }
-        if (found) break;
-      }
-      if (!found) return { error: `Lesson ${lessonId} not found` };
+      const found = state.getLessonById(lessonId as string);
+      if (!found) return { ok: false, error: `Lesson ${lessonId} not found` };
       const blocks = found.content ?? [];
       const total = blocks.length;
       const a = typeof from === "number" ? Math.max(0, Math.min(from as number, total)) : 0;
       const b = typeof to === "number" ? Math.max(a, Math.min(to as number, total)) : total;
       return {
+        ok: true,
         lessonId: found.id,
         title: found.title,
-        chapterId: parentChapterId,
-        syllabusId: parentSyllabusId,
         totalBlocks: total,
         from: a,
         to: b,
@@ -174,7 +260,10 @@ export function CopilotTools() {
       { name: "subject", type: "string", description: "Subject area" },
       { name: "description", type: "string", description: "Optional description", required: false },
     ],
-    handler: ({ id, title, subject, description }) => { createSyllabus(id as string, title as string, subject as string, description as string | undefined); },
+    handler: ({ id, title, subject, description }) => {
+      createSyllabus(id as string, title as string, subject as string, description as string | undefined);
+      return { ok: true, id };
+    },
     render: ({ status, args }) => (<ToolCallCard title="create_syllabus" status={status} args={args as Record<string, unknown>} />),
   });
 
@@ -187,39 +276,116 @@ export function CopilotTools() {
       { name: "title", type: "string", description: "Chapter title" },
       { name: "description", type: "string", description: "Optional description", required: false },
     ],
-    handler: ({ syllabusId, chapterId, title, description }) => { addChapter(syllabusId as string, chapterId as string, title as string, description as string | undefined); },
+    handler: ({ syllabusId, chapterId, title, description }) => {
+      addChapter(syllabusId as string, chapterId as string, title as string, description as string | undefined);
+      return { ok: true, chapterId };
+    },
     render: ({ status, args }) => (<ToolCallCard title="add_chapter" status={status} args={args as Record<string, unknown>} />),
   });
 
   useCopilotAction({
     name: "add_lesson",
-    description: "Add a lesson to a chapter with optional BlockNote content",
+    description:
+      "Add a lesson to a chapter with optional BlockNote content. " +
+      "Content is validated with BlockNote before it is saved. " +
+      "On validation failure the lesson is NOT created and the handler returns { ok: false, error }.",
     parameters: [
       { name: "chapterId", type: "string", description: "Parent chapter id" },
       { name: "lessonId", type: "string", description: "Unique lesson id" },
       { name: "title", type: "string", description: "Lesson title" },
       { name: "content", type: "object[]", description: "Initial BlockNote content blocks", required: false },
     ],
-    handler: ({ chapterId, lessonId, title, content }) => { addLesson(chapterId as string, lessonId as string, title as string, (content ?? []) as unknown as never); },
+    handler: ({ chapterId, lessonId, title, content }) => {
+      const blocks = (content ?? []) as Block[];
+      const v = validateBlockNoteContent(blocks);
+      if (!v.ok) { const err = v.error ?? "invalid";
+        recordMutation(lessonId as string, { op: "replace", previous: [], next: blocks, at: new Date().toISOString(), error: err });
+        setRenderError(lessonId as string, err);
+        return { ok: false, error: err, hint: "Fix the BlockNote JSON and call add_lesson again." };
+      }
+      addLesson(chapterId as string, lessonId as string, title as string, blocks as unknown as never);
+      recordMutation(lessonId as string, { op: "replace", previous: [], next: blocks, at: new Date().toISOString() });
+      return { ok: true, lessonId, blocks: blocks.length };
+    },
     render: ({ status, args }) => {
       const raw = args as Record<string, unknown> | undefined;
-      const preview = raw ? { chapterId: raw.chapterId, lessonId: raw.lessonId, title: raw.title, blocks: Array.isArray(raw.content) ? (raw.content as unknown[]).length : 0 } : undefined;
-      return (<ToolCallCard title="add_lesson" status={status} args={preview as Record<string, unknown> | undefined} />);
+      const lessonId = raw?.lessonId as string | undefined;
+      return <LessonDiffCard lessonId={lessonId} title="add_lesson" status={status} args={raw} />;
     },
   });
 
   useCopilotAction({
     name: "update_lesson_content",
-    description: "Replace the BlockNote content of an existing lesson",
+    description:
+      "REPLACE the full BlockNote content of an existing lesson. " +
+      "Content is validated with BlockNote before it is saved. " +
+      "On validation failure the lesson is NOT modified and the handler returns { ok: false, error }. " +
+      "After a successful update, call `read_lesson` to verify the result.",
     parameters: [
       { name: "lessonId", type: "string", description: "Lesson id to update" },
-      { name: "content", type: "object[]", description: "New BlockNote content blocks" },
+      { name: "content", type: "object[]", description: "New BlockNote content blocks (replaces existing)" },
     ],
-    handler: ({ lessonId, content }) => { updateLessonContent(lessonId as string, (content ?? []) as unknown as never); },
+    handler: ({ lessonId, content }) => {
+      const id = lessonId as string;
+      const next = (content ?? []) as Block[];
+      const state = useSyllabusStore.getState();
+      const prev = state.getLessonById(id)?.content ?? [];
+      const v = validateBlockNoteContent(next);
+      if (!v.ok) { const err = v.error ?? "invalid";
+        recordMutation(id, { op: "replace", previous: prev, next, at: new Date().toISOString(), error: err });
+        setRenderError(id, err);
+        return { ok: false, error: err, hint: "Fix the BlockNote JSON and call update_lesson_content again." };
+      }
+      updateLessonContent(id, next as unknown as never);
+      recordMutation(id, { op: "replace", previous: prev, next, at: new Date().toISOString() });
+      setRenderError(id, null);
+      return { ok: true, lessonId: id, blocks: next.length, previousBlocks: prev.length };
+    },
     render: ({ status, args }) => {
       const raw = args as Record<string, unknown> | undefined;
-      const preview = raw ? { lessonId: raw.lessonId, blocks: Array.isArray(raw.content) ? (raw.content as unknown[]).length : 0 } : undefined;
-      return (<ToolCallCard title="update_lesson_content" status={status} args={preview as Record<string, unknown> | undefined} />);
+      const lessonId = raw?.lessonId as string | undefined;
+      return <LessonDiffCard lessonId={lessonId} title="update_lesson_content" status={status} args={raw} />;
+    },
+  });
+
+  useCopilotAction({
+    name: "append_lesson_content",
+    description:
+      "APPEND new BlockNote blocks to the END of an existing lesson (non-destructive). " +
+      "Use this instead of update_lesson_content whenever you only want to add material. " +
+      "Content is validated with BlockNote before it is saved; on failure the lesson is NOT modified. " +
+      "After a successful append, call `read_lesson` to verify the result.",
+    parameters: [
+      { name: "lessonId", type: "string", description: "Lesson id to append to" },
+      { name: "blocks", type: "object[]", description: "BlockNote blocks to append at the end" },
+    ],
+    handler: ({ lessonId, blocks }) => {
+      const id = lessonId as string;
+      const toAppend = (blocks ?? []) as Block[];
+      const state = useSyllabusStore.getState();
+      const prev = state.getLessonById(id)?.content ?? [];
+      const next = [...prev, ...toAppend];
+      const v = validateBlockNoteContent(next);
+      if (!v.ok) { const err = v.error ?? "invalid";
+        recordMutation(id, { op: "append", previous: prev, next, at: new Date().toISOString(), error: err });
+        setRenderError(id, err);
+        return { ok: false, error: err, hint: "Fix the BlockNote JSON of the new blocks and call append_lesson_content again." };
+      }
+      appendLessonContent(id, toAppend as unknown as never);
+      recordMutation(id, { op: "append", previous: prev, next, at: new Date().toISOString() });
+      setRenderError(id, null);
+      return { ok: true, lessonId: id, appended: toAppend.length, totalBlocks: next.length };
+    },
+    render: ({ status, args }) => {
+      const raw = args as Record<string, unknown> | undefined;
+      const lessonId = raw?.lessonId as string | undefined;
+      const preview = raw ? { lessonId: raw.lessonId, appending: Array.isArray(raw.blocks) ? (raw.blocks as unknown[]).length : 0 } : undefined;
+      const mutation = useSyllabusStore.getState().lastMutation[lessonId ?? ""];
+      return (
+        <ToolCallCard title="append_lesson_content" status={status} args={preview as Record<string, unknown> | undefined} error={mutation?.error ?? null}>
+          {mutation && !mutation.error && <BlockDiff previous={mutation.previous} next={mutation.next} />}
+        </ToolCallCard>
+      );
     },
   });
 
@@ -227,7 +393,7 @@ export function CopilotTools() {
     name: "remove_chapter",
     description: "Remove a chapter and all its lessons",
     parameters: [{ name: "chapterId", type: "string", description: "Chapter id to remove" }],
-    handler: ({ chapterId }) => { removeChapter(chapterId as string); },
+    handler: ({ chapterId }) => { removeChapter(chapterId as string); return { ok: true }; },
     render: ({ status, args }) => (<ToolCallCard title="remove_chapter" status={status} args={args as Record<string, unknown>} />),
   });
 
@@ -235,7 +401,7 @@ export function CopilotTools() {
     name: "remove_lesson",
     description: "Remove a lesson by id",
     parameters: [{ name: "lessonId", type: "string", description: "Lesson id to remove" }],
-    handler: ({ lessonId }) => { removeLesson(lessonId as string); },
+    handler: ({ lessonId }) => { removeLesson(lessonId as string); return { ok: true }; },
     render: ({ status, args }) => (<ToolCallCard title="remove_lesson" status={status} args={args as Record<string, unknown>} />),
   });
 
@@ -246,7 +412,7 @@ export function CopilotTools() {
       { name: "lessonId", type: "string", description: "Lesson id" },
       { name: "error", type: "string", description: "Error message, or null to clear" },
     ],
-    handler: ({ lessonId, error }) => { setRenderError(lessonId as string, (error as string | null) ?? null); },
+    handler: ({ lessonId, error }) => { setRenderError(lessonId as string, (error as string | null) ?? null); return { ok: true }; },
     render: ({ status, args }) => (<ToolCallCard title="report_render_error" status={status} args={args as Record<string, unknown>} />),
   });
 
