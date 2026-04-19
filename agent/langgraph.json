@@ -4,5 +4,16 @@
     "syllabus_agent": "./agent/graph.py:graph"
   },
   "env": "./agent/.env",
-  "python_version": "3.11"
+  "python_version": "3.11",
+  "http": {
+    "cors": {
+      "allow_origins": [
+        "https://frontend-production-e974.up.railway.app",
+        "http://localhost:3000"
+      ],
+      "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      "allow_headers": ["*"],
+      "allow_credentials": true
+    }
+  }
 }
