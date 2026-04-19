@@ -5,7 +5,7 @@ import { useSyllabusStore } from "@/store/syllabusStore";
 import { FileTree } from "@/components/FileTree";
 import { BlockNoteEditor, EmptyEditorState } from "@/components/BlockNoteEditor";
 import { CopilotChat } from "@copilotkit/react-ui";
-import { AgentActivityPanel } from "@/components/AgentActivityPanel";
+import { ChatInputWithState } from "@/components/chat/ChatInputWithState";
 
 export interface PlanStep {
   description: string;
@@ -56,9 +56,9 @@ export default function SyllabusViewerClient() {
         <ResizeHandle />
 
         {/*
-          Right: CopilotChat with the AgentActivityPanel floating above
-          the prompt input. The Panel is position:relative so the panel's
-          absolute positioning docks it to the bottom of the chat column.
+          Right: CopilotChat with a custom `Input` slot that renders a
+          collapsible agent-state panel directly above the textarea, instead
+          of floating it separately over the messages area.
         */}
         <Panel
           id="chat"
@@ -70,6 +70,7 @@ export default function SyllabusViewerClient() {
         >
           <CopilotChat
             className="h-full"
+            Input={ChatInputWithState}
             labels={{
               title: "Syllabus AI",
               placeholder: "Describe the course you want to plan...",
@@ -78,7 +79,6 @@ export default function SyllabusViewerClient() {
             }}
             instructions="You are a syllabus-building AI. Help the user design course outlines, chapters, and lessons. Use the available tools to create and update syllabi."
           />
-          <AgentActivityPanel />
         </Panel>
 
       </PanelGroup>
