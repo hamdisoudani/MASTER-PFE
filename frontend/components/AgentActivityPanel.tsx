@@ -4,7 +4,7 @@ import { useSyllabusAgent } from "@/lib/useSyllabusAgent";
 import { Activity, Loader2, CheckCircle2 } from "lucide-react";
 
 export function AgentActivityPanel({ threadId }: { threadId: string }) {
-  const stream = useSyllabusAgent(threadId);
+  const stream = useSyllabusAgent({ threadId });
   const plan = (stream.values as any)?.plan ?? [];
   return (
     <div className="rounded border border-neutral-800 p-3 text-sm">

@@ -143,3 +143,10 @@ body {
   border-radius: var(--radius) !important;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
 }
+
+/* Markdown prose tweaks for chat bubbles */
+.prose-custom { font-size: 0.875rem; }
+.prose-custom > *:first-child { margin-top: 0 !important; }
+.prose-custom > *:last-child { margin-bottom: 0 !important; }
+.prose-custom pre { background: var(--muted); }
+.prose-custom code { color: var(--foreground); }

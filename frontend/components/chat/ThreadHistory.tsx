@@ -3,7 +3,7 @@ import React from "react";
 import { useQueryState } from "nuqs";
 import { useThreads } from "@/providers/Thread";
 import { useThreadStore } from "@/stores/thread-store";
-import { Plus, RefreshCcw, Trash2 } from "lucide-react";
+import { Loader2, Plus, RefreshCcw, Trash2 } from "lucide-react";
 
 function firstUserPreview(t: any): string {
   const vals = t?.values as any;
@@ -64,7 +64,16 @@ export function ThreadHistory() {
         <span className="text-[10px] text-[var(--muted-foreground)] opacity-70 tabular-nums ml-1">{threads.length}</span>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {isLoading && <div className="p-3 text-xs text-[var(--muted-foreground)]">Loading threads…</div>}
+        {isLoading && (
+          <div className="flex items-center gap-2 p-3 text-xs text-[var(--muted-foreground)]">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading threads…
+          </div>
+        )}
+        {!isLoading && isValidating && (
+          <div className="flex items-center gap-2 px-3 py-1 text-[10px] text-[var(--muted-foreground)] border-b border-[var(--border)]">
+            <Loader2 className="h-3 w-3 animate-spin" /> Refreshing…
+          </div>
+        )}
         {!isLoading && threads.length === 0 && (
           <div className="p-3 text-xs text-[var(--muted-foreground)]">No threads yet. Click <span className="text-[var(--primary)] font-medium">New</span>.</div>
         )}
