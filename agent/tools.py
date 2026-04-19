@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
-from .search import serper_search, jina_scrape
+from agent.search import serper_search, jina_scrape
 
 
 class StepInput(BaseModel):

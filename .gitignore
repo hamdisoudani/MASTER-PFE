@@ -24,3 +24,7 @@ data/
 
 # Agent venv
 agent/.venv/
+
+.langgraph_api/
+.venv/
+agent/__pycache__/

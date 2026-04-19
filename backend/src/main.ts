@@ -6,7 +6,6 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   // Global process-level safety nets.
   //
-  // The CopilotKit runtime proxies SSE from the upstream LangGraph agent via
   // undici. If the upstream closes the connection with a malformed last chunk
   // (HPE_INVALID_CHUNK_SIZE) or the stream is aborted mid-flight, undici emits
   // an async error that is NOT attached to the original request promise chain
@@ -47,7 +46,6 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
-  // Raise body-parser limits — CopilotKit requests can be several hundred KB
   // once readables and tool results accumulate.
   app.use(json({ limit: '10mb' }));
   app.use(urlencoded({ extended: true, limit: '10mb' }));
@@ -62,7 +60,6 @@ async function bootstrap() {
     allowedHeaders: [
       'Content-Type',
       'Authorization',
-      'x-copilotkit-runtime-client-gql-version',
     ],
     credentials: false,
   });

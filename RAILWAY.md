@@ -36,7 +36,6 @@ Deploy **3 Railway services** from this monorepo — each maps to one subdirecto
 - **Add Service** → GitHub → same repo → **Root Directory** = `backend`
 - **Environment Variables:**
   ```
-  AGENT_URL      = https://agent-xxx.railway.app/copilotkit
   CORS_ORIGINS   = *
   ```
 - After deploy, copy the **Public URL** (e.g. `https://backend-xxx.railway.app`)
@@ -47,7 +46,6 @@ Deploy **3 Railway services** from this monorepo — each maps to one subdirecto
 - **Add Service** → GitHub → same repo → **Root Directory** = `frontend`
 - **Environment Variables:**
   ```
-  NEXT_PUBLIC_RUNTIME_URL = https://backend-xxx.railway.app/copilotkit
   ```
 - After deploy → open the frontend URL to see the chat UI
 
@@ -70,11 +68,9 @@ uvicorn agent.main:app --port 8000
 
 # Backend (new terminal)
 cd backend && npm install
-AGENT_URL=http://localhost:8000/copilotkit npm start
 
 # Frontend (new terminal)
 cd frontend && npm install
-NEXT_PUBLIC_RUNTIME_URL=http://localhost:3001/copilotkit npm run dev
 ```
 
 Or all at once:

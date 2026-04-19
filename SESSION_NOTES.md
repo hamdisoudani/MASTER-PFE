@@ -18,22 +18,17 @@ The `agent` name is a string key that must match **exactly** (case-sensitive) ac
 
 ---
 
-## 🔔 RULE 2 — Only ONE `<CopilotKit>` provider in the tree
 
-`<CopilotKit>` must appear **only in `layout.tsx`**. Never add a second one inside `page.tsx` or child components.
 
 ---
 
 ## 🔔 RULE 3 — Backend URL hardcoded in layout.tsx (no proxy)
 
 ```tsx
-<CopilotKit
-  runtimeUrl="https://backend-production-47f8.up.railway.app/copilotkit"
   agent="syllabus_agent"
 >
 ```
 
-Do **not** replace this with a `/api/copilotkit` proxy route — that was tried and broke things.
 
 ---
 
@@ -90,10 +85,8 @@ Not just builds — use E2B sandbox for:
 
 ```
 Browser
-  └─⤶ layout.tsx <CopilotKit runtimeUrl="https://backend-production-47f8.up.railway.app/copilotkit" agent="syllabus_agent">
          │
          ⤶
-      NestJS /copilotkit
         agents: { syllabus_agent: HttpAgent → AGENT_URL }
          │
          ⤶
@@ -146,7 +139,6 @@ tools_node ⇒ chat_node (loop)
 END
 ```
 
-Frontend tool calls (create_syllabus etc.) are handled by CopilotKit runtime — they never reach the Python tools_node.
 
 ---
 
@@ -187,7 +179,6 @@ class-variance-authority, clsx, tailwind-merge, lucide-react
 | Package | Version | Note |
 |---------|---------|------|
 | `@blocknote/react` | `^0.48` | Uses `.bn-root` for theme vars |
-| `@copilotkit/react-core` | 1.56.0 | Must NOT be double-wrapped |
 | `zustand` | `^4.5.2` | Persist store for syllabus state |
 | `@mantine/core` | `^7.15` | Peer dep for BlockNote |
 
@@ -200,16 +191,12 @@ class-variance-authority, clsx, tailwind-merge, lucide-react
 | # | Error | Root cause | Fix | File(s) |
 |---|-------|------------|-----|---------|
 | 1 | `SyntaxError` — files contained placeholder strings after commit | `execute_composio_tool` receives placeholder values instead of real content when large strings are passed inline in the JSON args | Switched to `composio_workbench` with content embedded as Python string literals | `agent/nodes.py`, `frontend/components/CopilotTools.tsx` |
-| 2 | Frontend build: `PostCSSSyntaxError` on `@copilotkit/react-core/dist/v2/index.css` | `@copilotkit/react-core/v2` auto-imports a Tailwind v4 CSS file (~76 KB) that PostCSS in Next.js 15 cannot parse | Added webpack `IgnorePlugin` in `next.config.js` to suppress that specific CSS auto-import | `frontend/next.config.js` |
 | 3 | `TypeError: get_llm() takes 0 positional arguments but 1 was given` | `nodes.py` calls `get_llm(config)` but `llm.py` defined `get_llm()` with no params | Added `config=None` optional parameter to `get_llm()` | `agent/llm.py` |
-| 4 | `AttributeError: 'Context' object has no attribute 'get'` | CopilotKit stores context entries as Pydantic `Context` model instances, not plain dicts — code was calling `.get("description")` on them | Switched to attribute access: `entry.description` / `entry.value` with `hasattr` fallback | `agent/nodes.py` |
 
 ### Key learnings
 
 - **`composio_workbench` is a separate sandbox** — it cannot read `/workspace/` files. Always embed file content directly as Python string literals in the workbench script.
 - **`execute_composio_tool` args are a JSON string** — large file content passed inline gets truncated/replaced. Use `composio_workbench` + `run_composio_tool()` for real file content.
-- **`@copilotkit/react-core/v2` CSS** — the `/v2` subpath ships a full Tailwind v4 stylesheet that Next.js PostCSS cannot handle. Suppress with `IgnorePlugin`; add CopilotKit styles manually if needed.
-- **CopilotKit context entries are Pydantic objects** — always use `entry.description` / `entry.value`, not dict `.get()`.
 
 ---
 

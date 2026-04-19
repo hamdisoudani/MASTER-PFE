@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Optional, Literal
+from typing import Annotated, Optional, Literal, Any
 from typing_extensions import TypedDict
-from copilotkit import CopilotKitState
+from langgraph.graph.message import add_messages
 
 
 class SearchQuery(TypedDict):
@@ -25,7 +25,20 @@ class ScrapedPage(TypedDict):
     markdown: str
 
 
-class AgentState(CopilotKitState):
+class AgentState(TypedDict, total=False):
+    """Pure-LangGraph agent state.
+
+    Frontend tool schemas are passed via `config["configurable"]["frontend_tools"]`
+    (a list of JSON-schema-ish tool dicts) — NOT via state anymore. The LLM sees
+    them alongside the Python tools.  When the LLM emits a tool_call for a
+    frontend tool, we:
+      1. stop the graph (end) so the stream delivers the AIMessage to the client
+      2. emit a compressed Pusher notification on channel `thread-<thread_id>`
+    The client executes the tool and resumes the run by submitting a ToolMessage
+    (via `useStream.submit({messages:[ToolMessage(...)]})`).
+    """
+
+    messages: Annotated[list, add_messages]
     plan: list[PlanStep]
     currentStepIndex: int
     planStatus: Literal["idle", "in_progress", "done"]
@@ -33,3 +46,4 @@ class AgentState(CopilotKitState):
     scraped_pages: list[ScrapedPage]
     current_activity: Optional[str]
     finished: bool
+    editor_context: Optional[dict[str, Any]]

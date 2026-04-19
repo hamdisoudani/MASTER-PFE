@@ -1,7 +1,7 @@
 {
   "name": "master-pfe-backend",
   "version": "1.0.0",
-  "description": "NestJS CopilotKit Runtime gateway",
+  "description": "NestJS gateway (CopilotKit removed; LangGraph served directly by agent)",
   "scripts": {
     "build": "nest build",
     "start": "node dist/main",
@@ -9,8 +9,6 @@
     "lint": "eslint \"src/**/*.ts\""
   },
   "dependencies": {
-    "@ag-ui/langgraph": "^0.0.29",
-    "@copilotkit/runtime": "1.56.0",
     "@langchain/langgraph": "^1.2.8",
     "@langchain/openai": "^1.4.4",
     "@nestjs/common": "^11.1.19",

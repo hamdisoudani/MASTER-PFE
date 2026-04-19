@@ -22,7 +22,6 @@ services:
     restart: unless-stopped
     env_file: ./backend/.env
     environment:
-      AGENT_URL: http://agent:8000/copilotkit
       PORT: "3001"
       CORS_ORIGINS: http://localhost:3000
     ports:
@@ -38,7 +37,6 @@ services:
     restart: unless-stopped
     env_file: ./frontend/.env.local
     environment:
-      NEXT_PUBLIC_RUNTIME_URL: http://localhost:3001/copilotkit
       BACKEND_URL: http://backend:3001
     ports:
       - "3000:3000"
