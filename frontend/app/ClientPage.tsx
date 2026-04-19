@@ -1,22 +1,19 @@
 "use client";
 
-import dynamic from 'next/dynamic';
+import dynamic from "next/dynamic";
+import { ThreadProvider } from "@/providers/Thread";
 
 const SyllabusViewerClient = dynamic(
-  () => import('../components/SyllabusViewerClient'),
-  { ssr: false }
-);
-
-const CopilotTools = dynamic(
-  () => import('../components/CopilotTools').then(m => ({ default: m.CopilotTools })),
+  () => import("../components/SyllabusViewerClient"),
   { ssr: false }
 );
 
 export default function ClientPage() {
   return (
-    <main>
-      <CopilotTools />
-      <SyllabusViewerClient />
-    </main>
+    <ThreadProvider refreshInterval={15000}>
+      <main>
+        <SyllabusViewerClient />
+      </main>
+    </ThreadProvider>
   );
 }

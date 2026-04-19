@@ -31,7 +31,9 @@
     "@langchain/langgraph-sdk": "^0.0.100",
     "pusher-js": "^8.4.0",
     "pusher": "^5.2.0",
-    "pako": "^2.1.0"
+    "pako": "^2.1.0",
+    "swr": "^2.3.0",
+    "nuqs": "^2.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",
