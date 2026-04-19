@@ -1,9 +1,10 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 import { useQueryState } from "nuqs";
-import { useThreads } from "@/providers/Thread";
+import { useThreads, threadVariant } from "@/providers/Thread";
 import { useThreadStore } from "@/stores/thread-store";
-import { Loader2, Plus, RefreshCcw, Trash2 } from "lucide-react";
+import type { AgentVariant } from "@/providers/client";
+import { Loader2, Plus, RefreshCcw, Trash2, Sparkles, Zap } from "lucide-react";
 
 function firstUserPreview(t: any): string {
   const vals = t?.values as any;
@@ -22,9 +23,10 @@ export function ThreadHistory() {
   const { threads, isLoading, isValidating, refreshThreads, createThread, deleteThread } = useThreads();
   const [threadId, setThreadId] = useQueryState("threadId");
   const setActive = useThreadStore((s) => s.setActiveThread);
+  const [nextVariant, setNextVariant] = useState<AgentVariant>("classic");
 
   const onNew = async () => {
-    const t = await createThread();
+    const t = await createThread(nextVariant);
     await setThreadId(t.thread_id);
     setActive(t.thread_id);
   };
@@ -47,10 +49,19 @@ export function ThreadHistory() {
     <div className="flex h-full flex-col border-r border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] text-sm">
       <div className="flex items-center gap-1 border-b border-[var(--border)] px-2 py-2">
         <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)] mr-auto">Threads</p>
+        <select
+          value={nextVariant}
+          onChange={(e) => setNextVariant(e.target.value as AgentVariant)}
+          className="rounded-md bg-[var(--muted)] text-[var(--foreground)] text-[10px] px-1 py-1 border border-[var(--border)] cursor-pointer"
+          title="Agent variant for the NEXT new thread (cannot change later)"
+        >
+          <option value="classic">Classic</option>
+          <option value="deep">Deep</option>
+        </select>
         <button
           onClick={onNew}
           className="flex items-center gap-1 rounded-md bg-[var(--primary)] text-[var(--primary-foreground)] px-2 py-1 text-xs font-medium hover:opacity-90 transition-opacity"
-          title="New thread"
+          title={`New ${nextVariant} thread`}
         >
           <Plus className="h-3 w-3" /> New
         </button>
@@ -79,6 +90,8 @@ export function ThreadHistory() {
         )}
         {threads.map((t: any) => {
           const active = t.thread_id === threadId;
+          const v = threadVariant(t);
+          const VIcon = v === "deep" ? Sparkles : Zap;
           return (
             <div
               key={t.thread_id}
@@ -89,10 +102,11 @@ export function ThreadHistory() {
                   : "hover:bg-[var(--muted)]"
               }`}
             >
+              <VIcon className={`mt-0.5 h-3 w-3 shrink-0 ${v === "deep" ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}`} />
               <div className="flex-1 min-w-0">
                 <div className="truncate text-[var(--foreground)]">{firstUserPreview(t)}</div>
                 <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
-                  {t.thread_id.slice(0, 8)} · {t.status ?? "idle"}
+                  {t.thread_id.slice(0, 8)} · {v} · {t.status ?? "idle"}
                 </div>
               </div>
               <button

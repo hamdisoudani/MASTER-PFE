@@ -6,7 +6,7 @@ import { useSyllabusAgent } from "@/lib/useSyllabusAgent";
 import { useSyllabusStore } from "@/store/syllabusStore";
 import { useThreadStore } from "@/stores/thread-store";
 import { useThreadSettingsStore } from "@/stores/thread-settings-store";
-import { useThreads } from "@/providers/Thread";
+import { useThreads, threadVariant } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { Markdown } from "@/components/chat/Markdown";
 import { AlertCircle, Ban, BookOpen, CheckCircle2, ChevronDown, ChevronRight, Circle, Eye, FileText, Layers, ListTodo, Loader2, OctagonAlert, Pencil, RotateCw, Send, Square, Wrench, XCircle, Zap, ZapOff } from "lucide-react";
@@ -780,7 +780,17 @@ export function ChatPane() {
     [setThreadIdParam, setActive, refreshThreads]
   );
 
-  const stream = useSyllabusAgent({ threadId: threadId ?? undefined, onThreadId: handleThreadId });
+  // Resolve the current thread's locked agent variant from its metadata.
+  // The "variant for next thread" picker in ThreadHistory only affects
+  // thread creation — an existing thread always keeps its original variant.
+  const { threads: _allThreads } = useThreads();
+  const currentThread = threadId ? _allThreads.find((x: any) => x.thread_id === threadId) : null;
+  const activeVariant = threadVariant(currentThread as any);
+  const stream = useSyllabusAgent({
+    threadId: threadId ?? undefined,
+    onThreadId: handleThreadId,
+    variant: activeVariant,
+  });
   const [input, setInput] = useState("");
   const store = useSyllabusStore();
   const plan = usePlanStore();

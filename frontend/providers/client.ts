@@ -2,7 +2,8 @@
 import { Client } from "@langchain/langgraph-sdk";
 
 const DEFAULT_AGENT_URL = "https://agent-production-43c3.up.railway.app";
-const DEFAULT_ASSISTANT = "syllabus_agent";
+const DEFAULT_CLASSIC_ASSISTANT = "syllabus_agent";
+const DEFAULT_DEEP_ASSISTANT = "syllabus_agent_deep";
 
 function nonEmpty(v: string | undefined | null): string | undefined {
   if (typeof v !== "string") return undefined;
@@ -13,8 +14,21 @@ function nonEmpty(v: string | undefined | null): string | undefined {
 export const LANGGRAPH_API_URL =
   nonEmpty(process.env.NEXT_PUBLIC_LANGGRAPH_URL) ?? DEFAULT_AGENT_URL;
 
-export const ASSISTANT_ID =
-  nonEmpty(process.env.NEXT_PUBLIC_ASSISTANT_ID) ?? DEFAULT_ASSISTANT;
+export const CLASSIC_ASSISTANT_ID =
+  nonEmpty(process.env.NEXT_PUBLIC_ASSISTANT_ID) ?? DEFAULT_CLASSIC_ASSISTANT;
+
+export const DEEP_ASSISTANT_ID =
+  nonEmpty(process.env.NEXT_PUBLIC_DEEP_ASSISTANT_ID) ?? DEFAULT_DEEP_ASSISTANT;
+
+// Back-compat export: existing code that imports `ASSISTANT_ID` keeps working
+// and falls back to the classic agent.
+export const ASSISTANT_ID = CLASSIC_ASSISTANT_ID;
+
+export type AgentVariant = "classic" | "deep";
+
+export function assistantIdFor(variant: AgentVariant | undefined | null): string {
+  return variant === "deep" ? DEEP_ASSISTANT_ID : CLASSIC_ASSISTANT_ID;
+}
 
 /** Optional API key for an auth-enabled LangGraph deployment. */
 export function langgraphHeaders(): Record<string, string> | undefined {

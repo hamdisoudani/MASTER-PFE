@@ -1,7 +1,11 @@
 "use client";
 import React, { createContext, useCallback, useContext, useMemo } from "react";
 import type { Thread } from "@langchain/langgraph-sdk";
-import { getLangGraphClient, ASSISTANT_ID } from "@/providers/client";
+import {
+  getLangGraphClient,
+  assistantIdFor,
+  type AgentVariant,
+} from "@/providers/client";
 import { useThreadsSWR } from "@/hooks/useThreadsSWR";
 
 interface ThreadContextValue {
@@ -10,7 +14,11 @@ interface ThreadContextValue {
   isValidating: boolean;
   refreshThreads: () => Promise<any>;
   getThread: (id: string) => Promise<Thread | null>;
-  createThread: (metadata?: Record<string, unknown>) => Promise<Thread>;
+  /** `variant` is persisted in thread metadata and CANNOT be changed later. */
+  createThread: (
+    variant?: AgentVariant,
+    extraMetadata?: Record<string, unknown>
+  ) => Promise<Thread>;
   deleteThread: (id: string) => Promise<void>;
 }
 
@@ -42,8 +50,9 @@ export function ThreadProvider({
   }, []);
 
   const createThread = useCallback(
-    async (metadata?: Record<string, unknown>) => {
-      const meta = metadata ?? { graph_id: ASSISTANT_ID };
+    async (variant: AgentVariant = "classic", extraMetadata?: Record<string, unknown>) => {
+      const graph_id = assistantIdFor(variant);
+      const meta = { graph_id, variant, ...(extraMetadata ?? {}) };
       const t = await getLangGraphClient().threads.create({ metadata: meta });
       await mutate();
       return t;
@@ -72,13 +81,17 @@ export function ThreadProvider({
     [threads, isLoading, isValidating, refreshThreads, getThread, createThread, deleteThread]
   );
 
-  return (
-    <ThreadContext.Provider value={value}>{children}</ThreadContext.Provider>
-  );
+  return <ThreadContext.Provider value={value}>{children}</ThreadContext.Provider>;
 }
 
 export function useThreads() {
   const ctx = useContext(ThreadContext);
   if (!ctx) throw new Error("useThreads must be used inside <ThreadProvider>");
   return ctx;
+}
+
+/** Read the locked agent variant from a thread's metadata. Defaults to "classic". */
+export function threadVariant(t: Thread | null | undefined): AgentVariant {
+  const v = (t?.metadata as any)?.variant;
+  return v === "deep" ? "deep" : "classic";
 }
