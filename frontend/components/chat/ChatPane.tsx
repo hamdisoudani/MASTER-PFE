@@ -155,13 +155,56 @@ type FrontendToolCall = {
   args: Record<string, unknown>;
 };
 
-function InterruptBanner({ call }: { call: FrontendToolCall }) {
+function InterruptCard({
+  call,
+  busy,
+  onApprove,
+  onReject,
+}: {
+  call: FrontendToolCall;
+  busy: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const entries = Object.entries(call.args ?? {});
   return (
-    <div className="mx-3 my-1 rounded-md border border-dashed border-[var(--primary)]/40 bg-[var(--primary)]/5 px-3 py-2 text-xs flex items-center gap-2">
-      <Loader2 className="h-3 w-3 animate-spin text-[var(--primary)]" />
-      <span>
-        Applying <code className="font-mono">{call.name}</code>…
-      </span>
+    <div className="mx-3 my-2 rounded-md border border-[var(--primary)]/50 bg-[var(--primary)]/5 px-3 py-3 text-sm">
+      <div className="flex items-center gap-2 mb-2">
+        <Wrench className="h-4 w-4 text-[var(--primary)]" />
+        <span className="font-medium">Agent wants to call</span>
+        <code className="font-mono text-xs bg-[var(--muted)] px-1.5 py-0.5 rounded">{call.name}</code>
+      </div>
+      {entries.length > 0 && (
+        <div className="rounded border border-[var(--border)] bg-[var(--background)]/50 p-2 mb-3 space-y-1">
+          {entries.map(([k, v]) => (
+            <div key={k} className="flex gap-2 text-xs">
+              <span className="font-mono text-[var(--muted-foreground)] min-w-[90px]">{k}</span>
+              <span className="font-mono break-all whitespace-pre-wrap">
+                {typeof v === "string" ? v : JSON.stringify(v, null, 2)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2 justify-end">
+        <button
+          type="button"
+          onClick={onReject}
+          disabled={busy}
+          className="px-3 py-1 text-xs rounded border border-[var(--border)] hover:bg-[var(--muted)] disabled:opacity-50"
+        >
+          Reject
+        </button>
+        <button
+          type="button"
+          onClick={onApprove}
+          disabled={busy}
+          className="px-3 py-1 text-xs rounded bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50 inline-flex items-center gap-1"
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+          Approve & run
+        </button>
+      </div>
     </div>
   );
 }
@@ -217,33 +260,59 @@ export function ChatPane() {
     return () => cancelAnimationFrame(id);
   }, [messages.length, isStreaming]);
 
-  const resumingIdRef = useRef<string | null>(null);
+  const [resumeBusy, setResumeBusy] = useState(false);
+  const handledIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
-    if (resumingIdRef.current === interruptValue.tool_call_id) return;
-    resumingIdRef.current = interruptValue.tool_call_id;
-    const { name, args } = interruptValue;
-    (async () => {
-      let result: any;
-      try {
-        const fn = (store as any)[name];
-        if (typeof fn !== "function") {
-          result = { ok: false, error: `unknown frontend tool: ${name}` };
-        } else {
-          const argList = Array.isArray(args) ? args : Object.values(args ?? {});
-          const out = await fn(...argList);
-          result = { ok: true, result: out ?? null };
-        }
-      } catch (e: any) {
-        result = { ok: false, error: String(e?.message ?? e) };
-      }
+    if (!interruptValue) handledIdRef.current = null;
+  }, [interruptValue]);
+
+  const resumeWith = useCallback(
+    (result: any) => {
       try {
         (stream as any).submit(undefined, { command: { resume: result } });
       } catch (e) {
         console.error("resume failed", e);
       }
-    })();
-  }, [interruptValue, store, stream]);
+    },
+    [stream]
+  );
+
+  const onApprove = useCallback(async () => {
+    if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
+    if (handledIdRef.current === interruptValue.tool_call_id) return;
+    handledIdRef.current = interruptValue.tool_call_id;
+    setResumeBusy(true);
+    const { name, args } = interruptValue;
+    const a = (args ?? {}) as any;
+    const dispatch: Record<string, () => any> = {
+      createSyllabus: () => store.createSyllabus(a.id, a.title, a.subject, a.description),
+      addChapter: () => store.addChapter(a.syllabusId, a.chapterId, a.title, a.description),
+      addLesson: () => store.addLesson(a.chapterId, a.lessonId, a.title, a.content ?? []),
+      updateLessonContent: () => store.updateLessonContent(a.lessonId, a.content ?? []),
+      appendLessonContent: () => store.appendLessonContent(a.lessonId, a.blocks ?? []),
+    };
+    let result: any;
+    try {
+      const run = dispatch[name];
+      if (!run) {
+        result = { ok: false, error: `unknown frontend tool: ${name}` };
+      } else {
+        const out = await run();
+        result = { ok: true, result: out ?? null };
+      }
+    } catch (e: any) {
+      result = { ok: false, error: String(e?.message ?? e) };
+    }
+    resumeWith(result);
+    setResumeBusy(false);
+  }, [interruptValue, store, resumeWith]);
+
+  const onReject = useCallback(() => {
+    if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
+    if (handledIdRef.current === interruptValue.tool_call_id) return;
+    handledIdRef.current = interruptValue.tool_call_id;
+    resumeWith({ ok: false, error: "user_rejected", message: "User rejected this tool call." });
+  }, [interruptValue, resumeWith]);
 
   const onSend = useCallback(() => {
     const text = input.trim();
@@ -327,7 +396,7 @@ export function ChatPane() {
         {messages.map((m, i) => (
           <MessageBubble key={visibleKey(m, i)} m={m} />
         ))}
-        {interruptValue && <InterruptBanner call={interruptValue} />}
+        {interruptValue && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
         <div ref={endRef} />
       </div>
       <div className="border-t border-[var(--border)] p-2 flex gap-2 bg-[var(--background)]">
