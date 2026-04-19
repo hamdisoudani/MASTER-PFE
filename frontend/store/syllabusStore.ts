@@ -98,6 +98,40 @@ interface SyllabusStore extends ThreadSyllabusSlice {
   getLessonById: (lessonId: string) => Lesson | null;
   getActiveLesson: () => Lesson | null;
   getActiveSyllabus: () => Syllabus | null;
+  patchLessonBlocks: (
+    lessonId: string,
+    op: 'replace' | 'insert' | 'delete',
+    startBlock: number,
+    endBlock: number | null,
+    blocks: Block[]
+  ) => { ok: boolean; error?: string; changed?: number; totalBlocks?: number };
+  getSyllabusOutline: (syllabusId?: string) => {
+    syllabusId: string | null;
+    title: string | null;
+    subject: string | null;
+    description?: string;
+    chapters: Array<{
+      id: string;
+      title: string;
+      description?: string;
+      lessons: Array<{ id: string; title: string; blockCount: number }>;
+    }>;
+    allSyllabi: Array<{ id: string; title: string; subject: string }>;
+  };
+  readLessonBlocks: (
+    lessonId: string,
+    startBlock: number,
+    endBlock: number
+  ) => {
+    ok: boolean;
+    error?: string;
+    lessonId?: string;
+    title?: string;
+    totalBlocks?: number;
+    start?: number;
+    end?: number;
+    blocks?: Array<{ index: number; id: string; type: string; text: string }>;
+  };
 }
 
 /** Resolve the bucket key for the slice currently bound to the UI. */
@@ -370,6 +404,137 @@ export const useSyllabusStore = create<SyllabusStore>()(
             return { ...s, renderErrors: errors };
           })
         ),
+
+      patchLessonBlocks: (lessonId, op, startBlock, endBlock, blocks) => {
+        let result: { ok: boolean; error?: string; changed?: number; totalBlocks?: number } = { ok: false, error: 'unknown' };
+        set((state) =>
+          updateSlice(state, (s) => {
+            let found = false;
+            let outcome = result;
+            const syllabi = s.syllabi.map((syl) => ({
+              ...syl,
+              chapters: syl.chapters.map((ch) => ({
+                ...ch,
+                lessons: ch.lessons.map((l) => {
+                  if (l.id !== lessonId) return l;
+                  found = true;
+                  const current = l.content || [];
+                  const total = current.length;
+                  const start1 = Math.max(1, Math.floor(startBlock || 1));
+                  const end1 = endBlock == null ? start1 : Math.max(start1, Math.floor(endBlock));
+                  const startIdx = Math.min(start1 - 1, total);
+                  const endIdx = Math.min(end1, total);
+                  const insertBlocks = Array.isArray(blocks) ? blocks : [];
+                  let nextContent = current;
+                  let changed = 0;
+                  if (op === 'replace') {
+                    nextContent = [
+                      ...current.slice(0, startIdx),
+                      ...insertBlocks,
+                      ...current.slice(endIdx),
+                    ];
+                    changed = Math.max(endIdx - startIdx, insertBlocks.length);
+                  } else if (op === 'insert') {
+                    nextContent = [
+                      ...current.slice(0, startIdx),
+                      ...insertBlocks,
+                      ...current.slice(startIdx),
+                    ];
+                    changed = insertBlocks.length;
+                  } else if (op === 'delete') {
+                    nextContent = [
+                      ...current.slice(0, startIdx),
+                      ...current.slice(endIdx),
+                    ];
+                    changed = Math.max(0, endIdx - startIdx);
+                  } else {
+                    outcome = { ok: false, error: `unknown op: ${op}` };
+                    return l;
+                  }
+                  outcome = { ok: true, changed, totalBlocks: nextContent.length };
+                  return { ...l, content: nextContent };
+                }),
+              })),
+            }));
+            if (!found) {
+              outcome = { ok: false, error: `lesson not found: ${lessonId}` };
+              return s;
+            }
+            result = outcome;
+            const mutation: LessonMutation = {
+              op: op === 'insert' ? 'append' : 'replace',
+              previous: [],
+              next: [],
+              at: new Date().toISOString(),
+            };
+            return { ...s, syllabi, lastMutation: { ...s.lastMutation, [lessonId]: mutation } };
+          })
+        );
+        return result;
+      },
+
+      getSyllabusOutline: (syllabusId) => {
+        const { syllabi, activeSyllabusId } = get();
+        const target =
+          (syllabusId && syllabi.find((s) => s.id === syllabusId)) ||
+          syllabi.find((s) => s.id === activeSyllabusId) ||
+          syllabi[0] ||
+          null;
+        const allSyllabi = syllabi.map((s) => ({ id: s.id, title: s.title, subject: s.subject }));
+        if (!target) {
+          return {
+            syllabusId: null,
+            title: null,
+            subject: null,
+            chapters: [],
+            allSyllabi,
+          };
+        }
+        return {
+          syllabusId: target.id,
+          title: target.title,
+          subject: target.subject,
+          description: target.description,
+          chapters: target.chapters.map((ch) => ({
+            id: ch.id,
+            title: ch.title,
+            description: ch.description,
+            lessons: ch.lessons.map((l) => ({
+              id: l.id,
+              title: l.title,
+              blockCount: (l.content || []).length,
+            })),
+          })),
+          allSyllabi,
+        };
+      },
+
+      readLessonBlocks: (lessonId, startBlock, endBlock) => {
+        const { getLessonById } = get();
+        const lesson = getLessonById(lessonId);
+        if (!lesson) return { ok: false, error: `lesson not found: ${lessonId}` };
+        const total = (lesson.content || []).length;
+        const start1 = Math.max(1, Math.floor(startBlock || 1));
+        const end1 = Math.max(start1, Math.floor(endBlock || total));
+        const startIdx = Math.min(start1 - 1, total);
+        const endIdx = Math.min(end1, total);
+        const slice = (lesson.content || []).slice(startIdx, endIdx);
+        const blocks = slice.map((b, i) => {
+          const text = (b.content || [])
+            .map((c: any) => (typeof c?.text === 'string' ? c.text : ''))
+            .join('');
+          return { index: startIdx + i + 1, id: b.id, type: b.type, text };
+        });
+        return {
+          ok: true,
+          lessonId,
+          title: lesson.title,
+          totalBlocks: total,
+          start: startIdx + 1,
+          end: endIdx,
+          blocks,
+        };
+      },
 
       getLessonById: (lessonId) => {
         const { syllabi } = get();

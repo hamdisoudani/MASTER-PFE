@@ -10,6 +10,8 @@ import { useThreads } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { Markdown } from "@/components/chat/Markdown";
 import { Loader2, Send, Square, Wrench, Zap, ZapOff } from "lucide-react";
+import { usePlanStore } from "@/stores/plan-store";
+import { PlanCard } from "@/components/chat/PlanCard";
 
 type AnyMsg = {
   id?: string;
@@ -86,6 +88,78 @@ const FRONTEND_TOOLS = [
         blocks: { type: "array", items: { type: "object" } },
       },
       required: ["lessonId", "blocks"],
+    },
+  },
+  {
+    name: "getSyllabusOutline",
+    description: "Read-only. Returns the skeleton of the current thread's syllabus: { syllabusId, title, subject, chapters:[{ id, title, description, lessons:[{ id, title, blockCount }] }], allSyllabi }. Call this FIRST when you need to orient yourself before editing. If no syllabusId is given, the active one is used.",
+    parameters: {
+      type: "object",
+      properties: {
+        syllabusId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "readLessonBlocks",
+    description: "Read-only. Returns a slice of a lesson's BlockNote content by 1-indexed inclusive block range: { totalBlocks, start, end, blocks:[{ index, id, type, text }] }. Use this before patchLessonBlocks so you know exactly what you are replacing.",
+    parameters: {
+      type: "object",
+      properties: {
+        lessonId: { type: "string" },
+        startBlock: { type: "integer", minimum: 1 },
+        endBlock: { type: "integer", minimum: 1 },
+      },
+      required: ["lessonId", "startBlock", "endBlock"],
+    },
+  },
+  {
+    name: "patchLessonBlocks",
+    description: "Surgical edit of a BlockNote lesson. op='replace' swaps blocks [startBlock..endBlock] with the provided blocks. op='insert' inserts before startBlock (endBlock ignored). op='delete' removes [startBlock..endBlock]. Prefer this over updateLessonContent whenever only part of a lesson changes. Block indices are 1-based and inclusive.",
+    parameters: {
+      type: "object",
+      properties: {
+        lessonId: { type: "string" },
+        op: { type: "string", enum: ["replace", "insert", "delete"] },
+        startBlock: { type: "integer", minimum: 1 },
+        endBlock: { type: "integer", minimum: 1 },
+        blocks: { type: "array", items: { type: "object" } },
+      },
+      required: ["lessonId", "op", "startBlock"],
+    },
+  },
+  {
+    name: "setPlan",
+    description: "Replace the thread's task plan with the given ordered list. Use this at the start of any non-trivial request to split the work into sub-tasks (e.g. 'search for references', 'draft outline', 'write chapter 1'). Status defaults to 'pending'.",
+    parameters: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              title: { type: "string" },
+              status: { type: "string", enum: ["pending", "in_progress", "done"] },
+            },
+            required: ["title"],
+          },
+        },
+      },
+      required: ["items"],
+    },
+  },
+  {
+    name: "updatePlanItem",
+    description: "Flip a single plan item's status. Mark the current task 'in_progress' when you start it and 'done' the moment it finishes, before moving on.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        status: { type: "string", enum: ["pending", "in_progress", "done"] },
+      },
+      required: ["id", "status"],
     },
   },
 ] as const;
@@ -232,6 +306,11 @@ export function ChatPane() {
     setCurrentSyllabusThread(threadId ?? null);
   }, [threadId, setCurrentSyllabusThread]);
 
+  const setCurrentPlanThread = usePlanStore((s) => s.setCurrentThread);
+  useEffect(() => {
+    setCurrentPlanThread(threadId ?? null);
+  }, [threadId, setCurrentPlanThread]);
+
   // Per-thread settings (auto-accept etc). We subscribe to the slice for the
   // active thread so the UI re-renders when it flips.
   const autoAccept = useThreadSettingsStore((s) =>
@@ -277,6 +356,7 @@ export function ChatPane() {
   const stream = useSyllabusAgent({ threadId: threadId ?? undefined, onThreadId: handleThreadId });
   const [input, setInput] = useState("");
   const store = useSyllabusStore();
+  const plan = usePlanStore();
   const cancel = useCancelStream();
 
   const messages = (stream.messages ?? []) as AnyMsg[];
@@ -344,6 +424,13 @@ export function ChatPane() {
       addLesson: () => store.addLesson(a.chapterId, a.lessonId, a.title, a.content ?? []),
       updateLessonContent: () => store.updateLessonContent(a.lessonId, a.content ?? []),
       appendLessonContent: () => store.appendLessonContent(a.lessonId, a.blocks ?? []),
+      patchLessonBlocks: () =>
+        store.patchLessonBlocks(a.lessonId, a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
+      getSyllabusOutline: () => store.getSyllabusOutline(a.syllabusId),
+      readLessonBlocks: () =>
+        store.readLessonBlocks(a.lessonId, a.startBlock, a.endBlock),
+      setPlan: () => plan.setPlan(a.items ?? []),
+      updatePlanItem: () => plan.updatePlanItem(a.id, a.status),
     };
     let result: any;
     try {
@@ -368,14 +455,16 @@ export function ChatPane() {
     resumeWith({ ok: false, error: "user_rejected", message: "User rejected this tool call." });
   }, [interruptValue, resumeWith]);
 
-  // Auto-accept: when enabled for this thread, approve any frontend tool-call
-  // interrupt the moment it appears. We guard with handledIdRef (already
-  // incremented inside onApprove) so each interrupt only resumes once.
+  // Read-only tools (outline/read-blocks) never need explicit approval — they
+  // only query the editor state. Everything else respects the per-thread
+  // auto-accept toggle.
+  const READ_ONLY_TOOL_NAMES = new Set(["getSyllabusOutline", "readLessonBlocks"]);
   useEffect(() => {
-    if (!autoAccept) return;
     if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
     if (handledIdRef.current === interruptValue.tool_call_id) return;
     if (resumeBusy) return;
+    const isReadOnly = READ_ONLY_TOOL_NAMES.has(interruptValue.name);
+    if (!isReadOnly && !autoAccept) return;
     void onApprove();
   }, [autoAccept, interruptValue, resumeBusy, onApprove]);
 
@@ -493,10 +582,11 @@ export function ChatPane() {
             {threadId ? "No messages yet. Say hi 👋" : "Start a new thread to chat with the syllabus agent."}
           </div>
         )}
+        <PlanCard />
         {messages.map((m, i) => (
           <MessageBubble key={visibleKey(m, i)} m={m} />
         ))}
-        {interruptValue && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
+        {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks"]).has(interruptValue.name) && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
         <div ref={endRef} />
       </div>
       <div className="border-t border-[var(--border)] p-2 flex gap-2 bg-[var(--background)]">
