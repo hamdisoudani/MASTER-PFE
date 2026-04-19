@@ -1,12 +1,18 @@
-"""Pure-LangGraph ReAct nodes.
+"""Pure-LangGraph ReAct nodes with a deterministic critic gate.
 
-- `chat_node` calls the LLM with Python tools + frontend tool schemas
-  (provided per-run via config.configurable.frontend_tools).
+- `chat_node` calls the LLM with Python tools + frontend tool schemas.
 - When the LLM calls a Python tool, we route to the built-in `ToolNode`.
 - When the LLM calls a *frontend* tool, we route to `frontend_tool_node`
   which calls `langgraph.types.interrupt(...)` so the browser can execute
-  the mutation locally. The browser resumes with `Command(resume=result)`
-  and the resumed value becomes the ToolMessage content.
+  the mutation locally.
+- After every `frontend_tools` return, `critic_node` inspects whether a
+  lesson-mutating tool ran and applies a deterministic rubric to the
+  block array the agent sent. On failure we inject a SystemMessage with
+  concrete fix instructions and loop back to chat_node; on pass we
+  continue normally.
+- Scraped sources from `scrape_page` are mirrored into `research_cache`
+  so the writer can rely on them even after `compact_history` elides
+  the raw tool output from the chat thread.
 
 Context/robustness middleware (see agent/middleware.py) is applied inside
 `chat_node` before every model call, ported from langchain-ai/open-swe.
@@ -26,6 +32,7 @@ from langchain_core.messages import (
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
 
+from agent.critic import MAX_REVISIONS, evaluate_lesson, format_feedback
 from agent.llm import get_llm, get_model_family
 from agent.middleware import compact_history, ensure_no_empty_ai
 from agent.prompts import build_system_prompt
@@ -34,8 +41,14 @@ from agent.tools import PYTHON_TOOLS, PYTHON_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
 
-# Default context budget ~ 60% of a 20k window; override via env.
 CONTEXT_TOKEN_BUDGET = int(os.getenv("AGENT_CONTEXT_TOKEN_BUDGET", "12000"))
+
+LESSON_MUTATION_TOOLS = {
+    "addLesson",
+    "updateLessonContent",
+    "appendLessonContent",
+    "patchLessonBlocks",
+}
 
 
 def _frontend_tool_defs(config: RunnableConfig) -> list[dict[str, Any]]:
@@ -67,13 +80,6 @@ def _frontend_tool_names(config: RunnableConfig) -> set[str]:
 
 
 def _sanitize_for_mistral(messages: list) -> list:
-    """Mistral rejects dangling tool results and double-user turns.
-
-    FIXED: the old version overwrote `pending_tool_ids` on every AIMessage,
-    so if two AIMessages appeared back-to-back (e.g. after an error retry)
-    tool_call_ids from the first were silently dropped. We now union new
-    ids in and only discard them when their matching ToolMessage arrives.
-    """
     cleaned: list = []
     pending_tool_ids: set[str] = set()
     for m in messages:
@@ -109,8 +115,6 @@ def _sanitize_for_mistral(messages: list) -> list:
 
 
 def _provider_sanitize(messages: list) -> list:
-    """Provider-aware message cleanup. Mistral needs aggressive cleanup;
-    other providers accept canonical histories."""
     family = get_model_family()
     if family == "mistral":
         return _sanitize_for_mistral(messages)
@@ -118,16 +122,6 @@ def _provider_sanitize(messages: list) -> list:
 
 
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
-    """Run one LLM step.
-
-    Errors raised by the model provider (invalid tool args, auth, rate
-    limit, network) are caught and persisted onto the thread as an
-    AIMessage with `additional_kwargs["error"]`.
-
-    `parallel_tool_calls` is gated on model family: disabled for Mistral
-    (Structured Outputs + parallel calls is known-incompatible on some
-    providers), enabled elsewhere. Override via LLM_PARALLEL_TOOLS=0|1.
-    """
     llm = get_llm()
     frontend_defs = _frontend_tool_defs(config)
     all_tools: list[Any] = list(PYTHON_TOOLS) + list(frontend_defs)
@@ -144,11 +138,13 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
     compacted = ensure_no_empty_ai(compacted)
     messages = _provider_sanitize(compacted)
 
-    full_messages = [SystemMessage(content=build_system_prompt(state, _frontend_tool_defs(config)))] + messages
+    full_messages = [
+        SystemMessage(content=build_system_prompt(state, _frontend_tool_defs(config)))
+    ] + messages
 
     try:
         response: AIMessage = await bound.ainvoke(full_messages, config)
-    except Exception as e:  # noqa: BLE001 — user-visible surfaced errors
+    except Exception as e:  # noqa: BLE001
         logger.exception("chat_node LLM call failed")
         err_payload = {"message": str(e) or repr(e), "type": type(e).__name__}
         err_msg = AIMessage(
@@ -168,13 +164,30 @@ def _was_user_rejected(resume_value: Any) -> bool:
     return isinstance(resume_value, dict) and resume_value.get("error") == "user_rejected"
 
 
-async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
-    """Pause the graph and wait for the browser to execute a frontend tool.
+def _cache_scrape_result(state: AgentState, tool_name: str, args: dict[str, Any], result_text: str) -> dict[str, Any]:
+    """Mirror scrape_page outputs into research_cache keyed by the URL.
 
-    If ANY tool call in the batch was rejected by the user, we append a
-    SystemMessage telling the model to ask for clarification instead of
-    retrying blindly, and we set stop_reason for the UI.
+    We store a trimmed markdown so the writer can grep/cite without
+    re-scraping and without keeping the full payload in message history.
     """
+    if tool_name != "scrape_page":
+        return {}
+    url = (args or {}).get("url") or "unknown"
+    cache = dict(state.get("research_cache") or {})
+    bucket_key = args.get("lesson_id") or args.get("topic") or "_global"
+    bucket = list(cache.get(bucket_key) or [])
+    if any(entry.get("url") == url for entry in bucket):
+        return {}
+    bucket.append({
+        "url": url,
+        "title": (result_text.splitlines()[0][:200] if result_text else url),
+        "markdown": (result_text or "")[:4000],
+    })
+    cache[bucket_key] = bucket
+    return {"research_cache": cache}
+
+
+async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     messages = list(state.get("messages", []))
     if not messages or not isinstance(messages[-1], AIMessage):
         return {}
@@ -183,6 +196,8 @@ async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[
 
     tool_messages: list[ToolMessage] = []
     any_rejected = False
+    last_lesson: dict[str, Any] | None = None
+
     for tc in last.tool_calls or []:
         if tc["name"] not in frontend_names:
             continue
@@ -209,6 +224,22 @@ async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[
         if _was_user_rejected(resume_value):
             any_rejected = True
 
+        if tc["name"] in LESSON_MUTATION_TOOLS and not _was_user_rejected(resume_value):
+            args = tc.get("args") or {}
+            lesson_id = args.get("lessonId") or args.get("chapterId") or "unknown"
+            if tc["name"] == "patchLessonBlocks":
+                blocks = args.get("blocks")
+            elif tc["name"] == "appendLessonContent":
+                blocks = args.get("blocks")
+            else:
+                blocks = args.get("content")
+            last_lesson = {
+                "lesson_id": lesson_id,
+                "tool": tc["name"],
+                "blocks": blocks if isinstance(blocks, list) else [],
+                "title": args.get("title"),
+            }
+
         if isinstance(resume_value, (dict, list)):
             content = json.dumps(resume_value)
         elif resume_value is None:
@@ -226,6 +257,60 @@ async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[
             )
         ))
         out["stop_reason"] = "interrupted_by_user"
+    if last_lesson is not None:
+        out["last_authored_lesson"] = last_lesson
+    return out
+
+
+async def critic_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    """Deterministic quality gate.
+
+    Runs after frontend_tool_node when a lesson mutation just happened.
+    For `patchLessonBlocks` we only have the patch (not the full lesson)
+    so we skip strict rubric and rely on the critic to re-engage once
+    the agent re-reads the lesson — we still log the intent.
+    """
+    lesson = state.get("last_authored_lesson") or None
+    if not lesson:
+        return {}
+
+    if lesson.get("tool") == "patchLessonBlocks":
+        return {"last_authored_lesson": None}
+
+    blocks = lesson.get("blocks") or []
+    report = evaluate_lesson(blocks)
+    lesson_id = str(lesson.get("lesson_id") or "unknown")
+
+    attempts = dict(state.get("revision_attempts") or {})
+    reports = dict(state.get("critic_reports") or {})
+    reports[lesson_id] = {**report, "tool": lesson.get("tool"), "title": lesson.get("title")}
+
+    out: dict[str, Any] = {
+        "critic_reports": reports,
+        "last_authored_lesson": None,
+    }
+
+    if report.get("pass"):
+        attempts.pop(lesson_id, None)
+        out["revision_attempts"] = attempts
+        return out
+
+    current = attempts.get(lesson_id, 0) + 1
+    attempts[lesson_id] = current
+    out["revision_attempts"] = attempts
+
+    if current > MAX_REVISIONS:
+        out["messages"] = [SystemMessage(
+            content=(
+                f"Quality rubric still failing for lesson {lesson_id} after "
+                f"{MAX_REVISIONS} revisions. Stop revising — briefly summarise the "
+                "remaining gaps to the user and ask for guidance."
+            )
+        )]
+        out["stop_reason"] = "quality_gate_exhausted"
+        return out
+
+    out["messages"] = [SystemMessage(content=format_feedback(lesson_id, report))]
     return out
 
 
@@ -249,3 +334,22 @@ def route_after_chat(state: AgentState, config: RunnableConfig) -> str:
     if has_python:
         return "tools"
     return "end"
+
+
+def route_after_frontend_tools(state: AgentState, config: RunnableConfig) -> str:
+    """If a lesson mutation happened, run the critic; otherwise resume chat."""
+    if state.get("stop_reason") == "interrupted_by_user":
+        return "chat_node"
+    if state.get("last_authored_lesson"):
+        return "critic_node"
+    return "chat_node"
+
+
+def route_after_tools_python(state: AgentState, config: RunnableConfig) -> str:
+    return "chat_node"
+
+
+def route_after_critic(state: AgentState, config: RunnableConfig) -> str:
+    if state.get("stop_reason") == "quality_gate_exhausted":
+        return "end"
+    return "chat_node"

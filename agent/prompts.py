@@ -150,6 +150,27 @@ def _render_editor_context(ed: dict[str, Any] | None) -> str:
     return "\n\nCurrent editor context (read-only, possibly truncated):\n" + snap
 
 
+
+
+CRITIC_GATE = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AUTOMATED QUALITY GATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+After every addLesson / updateLessonContent / appendLessonContent call a
+deterministic critic runs. If it fails it will inject a SystemMessage
+listing exact issues (missing sections, too few blocks, forbidden
+placeholder tokens, too few practice items). When you see such a message:
+
+  1. Do NOT argue with the critic. The rubric is non-negotiable.
+  2. Call readLessonBlocks to see current state, then use
+     patchLessonBlocks(op='replace' or 'insert') to add the missing
+     sections and expand short ones. NEVER rewrite the whole lesson.
+  3. Only continue to the next lesson once the critic passes.
+
+Revisions are capped (CRITIC_MAX_REVISIONS, default 2). If you exhaust
+the cap, stop revising that lesson and tell the user which parts are
+still below standard so they can decide."""
+
+
 def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None) -> str:
     defs = frontend_tool_defs or []
     parts = [
@@ -158,6 +179,7 @@ def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, An
         TOOL_JSON_RULES,
         PYTHON_TOOLS_DOC,
         _render_frontend_tool_docs(defs),
+        CRITIC_GATE,
         LOOP,
         _render_editor_context(state.get("editor_context")),
     ]
