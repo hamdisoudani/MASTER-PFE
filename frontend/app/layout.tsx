@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -12,6 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className="dark">
       <body>
         <NuqsAdapter>{children}</NuqsAdapter>
+        <Toaster theme="dark" position="top-right" richColors closeButton />
       </body>
     </html>
   );

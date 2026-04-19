@@ -51,12 +51,36 @@ export interface LessonMutation {
   error?: string | null;
 }
 
-interface SyllabusStore {
+/**
+ * Per-thread slice: each chat thread owns its own file tree + editor state.
+ * Switching threads swaps the active slice; the on-screen `syllabi`,
+ * `activeSyllabusId`, `activeItemId`, `renderErrors`, `lastMutation` fields
+ * are live mirrors of the current slice so no consumer needs to change.
+ */
+export interface ThreadSyllabusSlice {
   syllabi: Syllabus[];
   activeSyllabusId: string | null;
   activeItemId: string | null;
   renderErrors: Record<string, string>;
   lastMutation: Record<string, LessonMutation>;
+}
+
+const DEFAULT_BUCKET = '__default__';
+
+const emptySlice = (): ThreadSyllabusSlice => ({
+  syllabi: [],
+  activeSyllabusId: null,
+  activeItemId: null,
+  renderErrors: {},
+  lastMutation: {},
+});
+
+interface SyllabusStore extends ThreadSyllabusSlice {
+  byThread: Record<string, ThreadSyllabusSlice>;
+  currentThreadId: string | null;
+
+  setCurrentThread: (threadId: string | null) => void;
+  resetThread: (threadId?: string | null) => void;
 
   createSyllabus: (id: string, title: string, subject: string, description?: string) => void;
   addChapter: (syllabusId: string, chapterId: string, title: string, description?: string) => void;
@@ -76,174 +100,276 @@ interface SyllabusStore {
   getActiveSyllabus: () => Syllabus | null;
 }
 
+/** Resolve the bucket key for the slice currently bound to the UI. */
+function keyOf(state: { currentThreadId: string | null }): string {
+  return state.currentThreadId ?? DEFAULT_BUCKET;
+}
+
+/**
+ * Apply a pure slice update for the active thread and mirror the result to
+ * the top-level fields so existing selectors (`syllabi`, `activeSyllabusId`,
+ * `activeItemId`, …) keep working without any call-site changes.
+ */
+function updateSlice(
+  state: SyllabusStore,
+  updater: (slice: ThreadSyllabusSlice) => ThreadSyllabusSlice
+): Partial<SyllabusStore> {
+  const key = keyOf(state);
+  const current = state.byThread[key] ?? emptySlice();
+  const next = updater(current);
+  return {
+    byThread: { ...state.byThread, [key]: next },
+    syllabi: next.syllabi,
+    activeSyllabusId: next.activeSyllabusId,
+    activeItemId: next.activeItemId,
+    renderErrors: next.renderErrors,
+    lastMutation: next.lastMutation,
+  };
+}
+
 export const useSyllabusStore = create<SyllabusStore>()(
   persist(
     (set, get) => ({
+      byThread: {},
+      currentThreadId: null,
       syllabi: [],
       activeSyllabusId: null,
       activeItemId: null,
       renderErrors: {},
       lastMutation: {},
 
-      createSyllabus: (id, title, subject, description) =>
-        set((state) => ({
-          syllabi: [
-            ...state.syllabi.filter((s) => s.id !== id),
-            {
-              id,
-              title,
-              subject,
-              description,
-              chapters: [],
-              createdAt: new Date().toISOString(),
-            },
-          ],
-          activeSyllabusId: id,
-        })),
-
-      addChapter: (syllabusId, chapterId, title, description) =>
-        set((state) => ({
-          syllabi: state.syllabi.map((s) =>
-            s.id === syllabusId
-              ? {
-                  ...s,
-                  chapters: [
-                    ...s.chapters.filter((c) => c.id !== chapterId),
-                    {
-                      id: chapterId,
-                      syllabusId,
-                      title,
-                      description,
-                      lessons: [],
-                      isExpanded: true,
-                    },
-                  ],
-                }
-              : s
-          ),
-        })),
-
-      addLesson: (chapterId, lessonId, title, content) =>
-        set((state) => ({
-          syllabi: state.syllabi.map((s) => ({
-            ...s,
-            chapters: s.chapters.map((ch) =>
-              ch.id === chapterId
-                ? {
-                    ...ch,
-                    lessons: [
-                      ...ch.lessons.filter((l) => l.id !== lessonId),
-                      { id: lessonId, title, content: content || [] },
-                    ],
-                  }
-                : ch
-            ),
-          })),
-          activeItemId: lessonId,
-        })),
-
-      updateLessonContent: (lessonId, content) =>
-        set((state) => ({
-          syllabi: state.syllabi.map((s) => ({
-            ...s,
-            chapters: s.chapters.map((ch) => ({
-              ...ch,
-              lessons: ch.lessons.map((l) =>
-                l.id === lessonId ? { ...l, content } : l
-              ),
-            })),
-          })),
-        })),
-
-      appendLessonContent: (lessonId, blocks) =>
-        set((state) => ({
-          syllabi: state.syllabi.map((s) => ({
-            ...s,
-            chapters: s.chapters.map((ch) => ({
-              ...ch,
-              lessons: ch.lessons.map((l) =>
-                l.id === lessonId
-                  ? { ...l, content: [...(l.content || []), ...blocks] }
-                  : l
-              ),
-            })),
-          })),
-        })),
-
-      recordMutation: (lessonId, mutation) =>
-        set((state) => ({
-          lastMutation: { ...state.lastMutation, [lessonId]: mutation },
-        })),
-
-      removeSyllabus: (syllabusId) =>
-        set((state) => ({
-          syllabi: state.syllabi.filter((s) => s.id !== syllabusId),
-          activeSyllabusId:
-            state.activeSyllabusId === syllabusId
-              ? (state.syllabi.find((s) => s.id !== syllabusId)?.id ?? null)
-              : state.activeSyllabusId,
-          activeItemId: state.syllabi
-            .find((s) => s.id === syllabusId)
-            ?.chapters.flatMap((c) => c.lessons)
-            .some((l) => l.id === state.activeItemId)
-            ? null
-            : state.activeItemId,
-        })),
-
-      removeChapter: (chapterId) =>
+      setCurrentThread: (threadId) =>
         set((state) => {
-          const chapter = state.syllabi
-            .flatMap((s) => s.chapters)
-            .find((ch) => ch.id === chapterId);
-          const lessonIds = chapter?.lessons.map((l) => l.id) ?? [];
+          const key = threadId ?? DEFAULT_BUCKET;
+          const slice = state.byThread[key] ?? emptySlice();
+          const byThread = state.byThread[key]
+            ? state.byThread
+            : { ...state.byThread, [key]: slice };
           return {
-            syllabi: state.syllabi.map((s) => ({
-              ...s,
-              chapters: s.chapters.filter((ch) => ch.id !== chapterId),
-            })),
-            activeItemId: lessonIds.includes(state.activeItemId ?? '')
-              ? null
-              : state.activeItemId,
+            currentThreadId: threadId,
+            byThread,
+            syllabi: slice.syllabi,
+            activeSyllabusId: slice.activeSyllabusId,
+            activeItemId: slice.activeItemId,
+            renderErrors: slice.renderErrors,
+            lastMutation: slice.lastMutation,
           };
         }),
 
-      removeLesson: (lessonId) =>
-        set((state) => ({
-          syllabi: state.syllabi.map((s) => ({
-            ...s,
-            chapters: s.chapters.map((ch) => ({
-              ...ch,
-              lessons: ch.lessons.filter((l) => l.id !== lessonId),
-            })),
-          })),
-          activeItemId:
-            state.activeItemId === lessonId ? null : state.activeItemId,
-        })),
+      resetThread: (threadId) =>
+        set((state) => {
+          const key = threadId ?? keyOf(state);
+          const byThread = { ...state.byThread, [key]: emptySlice() };
+          const isActive = key === keyOf(state);
+          const fresh = emptySlice();
+          return isActive
+            ? {
+                byThread,
+                syllabi: fresh.syllabi,
+                activeSyllabusId: fresh.activeSyllabusId,
+                activeItemId: fresh.activeItemId,
+                renderErrors: fresh.renderErrors,
+                lastMutation: fresh.lastMutation,
+              }
+            : { byThread };
+        }),
 
-      setActiveItem: (id) => set({ activeItemId: id }),
+      createSyllabus: (id, title, subject, description) =>
+        set((state) =>
+          updateSlice(state, (s) => ({
+            ...s,
+            syllabi: [
+              ...s.syllabi.filter((x) => x.id !== id),
+              {
+                id,
+                title,
+                subject,
+                description,
+                chapters: [],
+                createdAt: new Date().toISOString(),
+              },
+            ],
+            activeSyllabusId: id,
+          }))
+        ),
+
+      addChapter: (syllabusId, chapterId, title, description) =>
+        set((state) =>
+          updateSlice(state, (s) => ({
+            ...s,
+            syllabi: s.syllabi.map((x) =>
+              x.id === syllabusId
+                ? {
+                    ...x,
+                    chapters: [
+                      ...x.chapters.filter((c) => c.id !== chapterId),
+                      {
+                        id: chapterId,
+                        syllabusId,
+                        title,
+                        description,
+                        lessons: [],
+                        isExpanded: true,
+                      },
+                    ],
+                  }
+                : x
+            ),
+          }))
+        ),
+
+      addLesson: (chapterId, lessonId, title, content) =>
+        set((state) =>
+          updateSlice(state, (s) => ({
+            ...s,
+            syllabi: s.syllabi.map((x) => ({
+              ...x,
+              chapters: x.chapters.map((ch) =>
+                ch.id === chapterId
+                  ? {
+                      ...ch,
+                      lessons: [
+                        ...ch.lessons.filter((l) => l.id !== lessonId),
+                        { id: lessonId, title, content: content || [] },
+                      ],
+                    }
+                  : ch
+              ),
+            })),
+            activeItemId: lessonId,
+          }))
+        ),
+
+      updateLessonContent: (lessonId, content) =>
+        set((state) =>
+          updateSlice(state, (s) => ({
+            ...s,
+            syllabi: s.syllabi.map((x) => ({
+              ...x,
+              chapters: x.chapters.map((ch) => ({
+                ...ch,
+                lessons: ch.lessons.map((l) =>
+                  l.id === lessonId ? { ...l, content } : l
+                ),
+              })),
+            })),
+          }))
+        ),
+
+      appendLessonContent: (lessonId, blocks) =>
+        set((state) =>
+          updateSlice(state, (s) => ({
+            ...s,
+            syllabi: s.syllabi.map((x) => ({
+              ...x,
+              chapters: x.chapters.map((ch) => ({
+                ...ch,
+                lessons: ch.lessons.map((l) =>
+                  l.id === lessonId
+                    ? { ...l, content: [...(l.content || []), ...blocks] }
+                    : l
+                ),
+              })),
+            })),
+          }))
+        ),
+
+      recordMutation: (lessonId, mutation) =>
+        set((state) =>
+          updateSlice(state, (s) => ({
+            ...s,
+            lastMutation: { ...s.lastMutation, [lessonId]: mutation },
+          }))
+        ),
+
+      removeSyllabus: (syllabusId) =>
+        set((state) =>
+          updateSlice(state, (s) => {
+            const removedLessonIds = new Set(
+              s.syllabi
+                .find((x) => x.id === syllabusId)
+                ?.chapters.flatMap((c) => c.lessons.map((l) => l.id)) ?? []
+            );
+            const syllabi = s.syllabi.filter((x) => x.id !== syllabusId);
+            return {
+              ...s,
+              syllabi,
+              activeSyllabusId:
+                s.activeSyllabusId === syllabusId
+                  ? (syllabi[0]?.id ?? null)
+                  : s.activeSyllabusId,
+              activeItemId:
+                s.activeItemId && removedLessonIds.has(s.activeItemId)
+                  ? null
+                  : s.activeItemId,
+            };
+          })
+        ),
+
+      removeChapter: (chapterId) =>
+        set((state) =>
+          updateSlice(state, (s) => {
+            const chapter = s.syllabi
+              .flatMap((x) => x.chapters)
+              .find((ch) => ch.id === chapterId);
+            const lessonIds = new Set(chapter?.lessons.map((l) => l.id) ?? []);
+            return {
+              ...s,
+              syllabi: s.syllabi.map((x) => ({
+                ...x,
+                chapters: x.chapters.filter((ch) => ch.id !== chapterId),
+              })),
+              activeItemId:
+                s.activeItemId && lessonIds.has(s.activeItemId)
+                  ? null
+                  : s.activeItemId,
+            };
+          })
+        ),
+
+      removeLesson: (lessonId) =>
+        set((state) =>
+          updateSlice(state, (s) => ({
+            ...s,
+            syllabi: s.syllabi.map((x) => ({
+              ...x,
+              chapters: x.chapters.map((ch) => ({
+                ...ch,
+                lessons: ch.lessons.filter((l) => l.id !== lessonId),
+              })),
+            })),
+            activeItemId: s.activeItemId === lessonId ? null : s.activeItemId,
+          }))
+        ),
+
+      setActiveItem: (id) =>
+        set((state) => updateSlice(state, (s) => ({ ...s, activeItemId: id }))),
 
       toggleChapter: (chapterId) =>
-        set((state) => ({
-          syllabi: state.syllabi.map((s) => ({
+        set((state) =>
+          updateSlice(state, (s) => ({
             ...s,
-            chapters: s.chapters.map((ch) =>
-              ch.id === chapterId ? { ...ch, isExpanded: !ch.isExpanded } : ch
-            ),
-          })),
-        })),
+            syllabi: s.syllabi.map((x) => ({
+              ...x,
+              chapters: x.chapters.map((ch) =>
+                ch.id === chapterId ? { ...ch, isExpanded: !ch.isExpanded } : ch
+              ),
+            })),
+          }))
+        ),
 
-      setActiveSyllabus: (id) => set({ activeSyllabusId: id }),
+      setActiveSyllabus: (id) =>
+        set((state) => updateSlice(state, (s) => ({ ...s, activeSyllabusId: id }))),
 
       setRenderError: (lessonId, error) =>
-        set((state) => {
-          const errors = { ...state.renderErrors };
-          if (error === null) {
-            delete errors[lessonId];
-          } else {
-            errors[lessonId] = error;
-          }
-          return { renderErrors: errors };
-        }),
+        set((state) =>
+          updateSlice(state, (s) => {
+            const errors = { ...s.renderErrors };
+            if (error === null) delete errors[lessonId];
+            else errors[lessonId] = error;
+            return { ...s, renderErrors: errors };
+          })
+        ),
 
       getLessonById: (lessonId) => {
         const { syllabi } = get();
@@ -273,6 +399,31 @@ export const useSyllabusStore = create<SyllabusStore>()(
         return syllabi.find((s) => s.id === activeSyllabusId) ?? null;
       },
     }),
-    { name: 'syllabus-store' }
+    {
+      name: 'syllabus-store',
+      version: 2,
+      /**
+       * v1 persisted a single flat `{ syllabi, activeSyllabusId, ... }` blob.
+       * v2 partitions by thread under `byThread`. Migrate legacy blobs into
+       * the `__default__` bucket so pre-thread data stays accessible whenever
+       * no threadId is selected.
+       */
+      migrate: (persisted: any, version) => {
+        if (!persisted) return persisted;
+        if (version >= 2 && persisted.byThread) return persisted;
+        const legacySlice: ThreadSyllabusSlice = {
+          syllabi: persisted.syllabi ?? [],
+          activeSyllabusId: persisted.activeSyllabusId ?? null,
+          activeItemId: persisted.activeItemId ?? null,
+          renderErrors: persisted.renderErrors ?? {},
+          lastMutation: persisted.lastMutation ?? {},
+        };
+        return {
+          byThread: { [DEFAULT_BUCKET]: legacySlice },
+          currentThreadId: null,
+          ...legacySlice,
+        };
+      },
+    }
   )
 );

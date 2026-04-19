@@ -1,13 +1,15 @@
 "use client";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryState } from "nuqs";
+import { toast } from "sonner";
 import { useSyllabusAgent } from "@/lib/useSyllabusAgent";
 import { useSyllabusStore } from "@/store/syllabusStore";
 import { useThreadStore } from "@/stores/thread-store";
+import { useThreadSettingsStore } from "@/stores/thread-settings-store";
 import { useThreads } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { Markdown } from "@/components/chat/Markdown";
-import { Loader2, Send, Square, Wrench } from "lucide-react";
+import { Loader2, Send, Square, Wrench, Zap, ZapOff } from "lucide-react";
 
 type AnyMsg = {
   id?: string;
@@ -223,6 +225,46 @@ export function ChatPane() {
     }
   }, [threadIdParam, activeFromStore, setActive]);
 
+  // Bind the syllabus store to the active thread so each thread gets its own
+  // file tree, syllabi, and lesson state.
+  const setCurrentSyllabusThread = useSyllabusStore((s) => s.setCurrentThread);
+  useEffect(() => {
+    setCurrentSyllabusThread(threadId ?? null);
+  }, [threadId, setCurrentSyllabusThread]);
+
+  // Per-thread settings (auto-accept etc). We subscribe to the slice for the
+  // active thread so the UI re-renders when it flips.
+  const autoAccept = useThreadSettingsStore((s) =>
+    threadId ? s.byThread[threadId]?.autoAccept ?? false : false
+  );
+  const toggleAutoAccept = useThreadSettingsStore((s) => s.toggleAutoAccept);
+  const clearThreadSettings = useThreadSettingsStore((s) => s.clearThread);
+
+  // If the URL points at a thread that no longer exists on the server, bounce
+  // the user back to the landing state and surface a small sonner toast.
+  const { getThread } = useThreads();
+  const checkedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!threadIdParam) return;
+    if (checkedRef.current === threadIdParam) return;
+    checkedRef.current = threadIdParam;
+    let cancelled = false;
+    (async () => {
+      const t = await getThread(threadIdParam);
+      if (cancelled) return;
+      if (!t) {
+        toast.error("Thread not found", {
+          description: "That conversation no longer exists. Returning to a fresh chat.",
+        });
+        void setThreadIdParam(null);
+        setActive(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadIdParam, getThread, setThreadIdParam, setActive]);
+
   const handleThreadId = useCallback(
     (id: string) => {
       void setThreadIdParam(id);
@@ -326,6 +368,17 @@ export function ChatPane() {
     resumeWith({ ok: false, error: "user_rejected", message: "User rejected this tool call." });
   }, [interruptValue, resumeWith]);
 
+  // Auto-accept: when enabled for this thread, approve any frontend tool-call
+  // interrupt the moment it appears. We guard with handledIdRef (already
+  // incremented inside onApprove) so each interrupt only resumes once.
+  useEffect(() => {
+    if (!autoAccept) return;
+    if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
+    if (handledIdRef.current === interruptValue.tool_call_id) return;
+    if (resumeBusy) return;
+    void onApprove();
+  }, [autoAccept, interruptValue, resumeBusy, onApprove]);
+
   const onSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
@@ -368,23 +421,58 @@ export function ChatPane() {
   }, [messages.length, switching]);
   const isSwitchingThread = switching && messages.length === 0;
 
+  const onToggleAutoAccept = useCallback(() => {
+    if (!threadId) {
+      toast.message("Start a thread first", {
+        description: "Auto-accept is saved per thread.",
+      });
+      return;
+    }
+    toggleAutoAccept(threadId);
+    toast.success(autoAccept ? "Auto-accept disabled" : "Auto-accept enabled", {
+      description: autoAccept
+        ? "You'll review each tool call before it runs."
+        : "Frontend tool calls in this thread will run without asking.",
+    });
+  }, [threadId, autoAccept, toggleAutoAccept]);
+
   const header = useMemo(() => {
     return (
       <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2 text-xs">
         <span className="text-[var(--muted-foreground)] font-medium">
           {threadId ? `Thread ${threadId.slice(0, 8)}` : "No thread"}
         </span>
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-2">
           {isStreaming && (
             <span className="flex items-center gap-1 text-[var(--primary)]">
               <Loader2 className="h-3 w-3 animate-spin" />
               streaming…
             </span>
           )}
+          <button
+            type="button"
+            onClick={onToggleAutoAccept}
+            disabled={!threadId}
+            title={
+              !threadId
+                ? "Start a thread to configure auto-accept"
+                : autoAccept
+                ? "Auto-accept is ON for this thread"
+                : "Auto-accept is OFF for this thread"
+            }
+            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+              autoAccept
+                ? "border-[var(--primary)]/60 bg-[var(--primary)]/10 text-[var(--primary)]"
+                : "border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
+            }`}
+          >
+            {autoAccept ? <Zap className="h-3 w-3" /> : <ZapOff className="h-3 w-3" />}
+            auto-accept {autoAccept ? "on" : "off"}
+          </button>
         </span>
       </div>
     );
-  }, [threadId, isStreaming]);
+  }, [threadId, isStreaming, autoAccept, onToggleAutoAccept]);
 
   return (
     <div className="flex h-full flex-col bg-[var(--card)] text-[var(--foreground)] border-l border-[var(--border)]">
