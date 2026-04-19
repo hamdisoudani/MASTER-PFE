@@ -3,7 +3,7 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "langgraph dev --host 0.0.0.0 --port ${PORT:-2024} --no-browser --allow-blocking"
+startCommand = "sh -c 'langgraph dev --host 0.0.0.0 --port $PORT --no-browser --allow-blocking'"
 healthcheckPath = "/ok"
 healthcheckTimeout = 120
 restartPolicyType = "on_failure"
