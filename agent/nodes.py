@@ -87,19 +87,19 @@ MANDATORY LESSON SKELETON (use this every time you write or rewrite a lesson):
     used while authoring the lesson.
 
 BlockNote block format you must emit:
-  paragraph:         {{ "type":"paragraph", "props":{{}},
-                        "content":[{{"type":"text","text":"...","styles":{{}}}}],
-                        "children":[] }}
-  heading (level N): {{ "type":"heading", "props":{{"level":N}},
-                        "content":[{{"type":"text","text":"...","styles":{{}}}}],
-                        "children":[] }}
-  bullet item:       {{ "type":"bulletListItem", "props":{{}},
-                        "content":[{{"type":"text","text":"...","styles":{{}}}}],
-                        "children":[] }}
-  numbered item:     {{ "type":"numberedListItem", "props":{{}}, ... }}
-  check item:        {{ "type":"checkListItem", "props":{{"checked":false}}, ... }}
-  quote:             {{ "type":"quote", "props":{{}}, ... }}
-  codeBlock:         {{ "type":"codeBlock", "props":{{"language":"..."}}, ... }}
+  paragraph:         { "type":"paragraph", "props":{},
+                        "content":[{"type":"text","text":"...","styles":{}}],
+                        "children":[] }
+  heading (level N): { "type":"heading", "props":{"level":N},
+                        "content":[{"type":"text","text":"...","styles":{}}],
+                        "children":[] }
+  bullet item:       { "type":"bulletListItem", "props":{},
+                        "content":[{"type":"text","text":"...","styles":{}}],
+                        "children":[] }
+  numbered item:     { "type":"numberedListItem", "props":{}, ... }
+  check item:        { "type":"checkListItem", "props":{"checked":false}, ... }
+  quote:             { "type":"quote", "props":{}, ... }
+  codeBlock:         { "type":"codeBlock", "props":{"language":"..."}, ... }
   Styles supported on text runs: bold, italic, underline, strike, code (all booleans).
   Use bold on key terms. Use italic on foreign/technical words.
 
@@ -113,11 +113,11 @@ Python (you call, you get the result in the same turn):
 
 Frontend / read-only (silent; never ask the user to approve):
   - getSyllabusOutline(syllabusId?)    returns the thread's syllabus skeleton:
-      {{ syllabusId, title, subject, chapters:[{{ id, title,
-         lessons:[{{ id, title, blockCount }}] }}], allSyllabi }}
+      { syllabusId, title, subject, chapters:[{ id, title,
+         lessons:[{ id, title, blockCount }] }], allSyllabi }
   - readLessonBlocks(lessonId, startBlock, endBlock)   1-indexed slice:
-      {{ totalBlocks, start, end,
-         blocks:[{{ index, id, type, text }}] }}
+      { totalBlocks, start, end,
+         blocks:[{ index, id, type, text }] }
 
 Frontend / mutation (user may approve each; auto-accept may be on):
   - createSyllabus(id, title, subject, description?)
@@ -132,7 +132,7 @@ Frontend / mutation (user may approve each; auto-accept may be on):
       ALWAYS prefer this over updateLessonContent when only part of a lesson changes.
 
 Planning (use on every non-trivial request):
-  - setPlan(items: [{{ title, status? }}])
+  - setPlan(items: [{ title, status? }])
   - updatePlanItem(id, status)         'pending' | 'in_progress' | 'done'
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
