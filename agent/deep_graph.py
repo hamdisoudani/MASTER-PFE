@@ -4,7 +4,6 @@ Architecture (aligned with deepagents design):
 
   supervisor (orchestrator ONLY)
     |  tools: write_todos (from TodoListMiddleware), task (from SubAgentMiddleware),
-    |         setPlan / updatePlanItem (to surface progress in the editor UI).
     |  NO web tools. NO lesson mutations. The supervisor must NOT do the
     |  work itself - it decomposes, plans, delegates, and checks.
     |
@@ -39,8 +38,6 @@ from agent.frontend_shells import (
     updateLessonContent,
     appendLessonContent,
     patchLessonBlocks,
-    setPlan,
-    updatePlanItem,
 )
 from agent.llm import get_llm
 from agent.tools import web_search, scrape_page
@@ -57,10 +54,12 @@ You operate BlockNote lessons for real learners (often children/students).
 
 ## Tools available to YOU (supervisor)
 - write_todos     - plan the full job up front; one todo per lesson.
+                    This is deepagents' built-in TODO list - the frontend
+                    renders it as the live plan. Do NOT call any separate
+                    setPlan / updatePlanItem tool (none exists for the
+                    supervisor). Just keep write_todos up to date.
 - task            - delegate to a subagent (researcher, writer, reviser).
                     This is how real work gets done.
-- setPlan         - publish the plan to the editor UI so the user sees it.
-- updatePlanItem  - flip a plan item to in_progress / done as you go.
 
 ## Subagents (each starts BLIND - no chat history, no memory of prior turns)
 - researcher  tools: web_search, scrape_page
@@ -99,19 +98,19 @@ the writer looks like:
 
 ## Workflow (for any request that creates or updates lessons)
 1. Read the user's request + any state context the client injected.
-2. Call write_todos with one todo per lesson you will author.
-3. Call setPlan with a user-visible plan (same items, plus status).
-4. For each lesson, in order:
-   a. updatePlanItem -> in_progress
-   b. task(researcher, ...) - pass topic, audience, what facts you
+2. Call write_todos with one todo per lesson you will author; mark the
+   first one in_progress.
+3. For each lesson, in order:
+   a. task(researcher, ...) - pass topic, audience, what facts you
       specifically need, required output format. Receive compact notes.
-   c. task(writer, ...) - pass the lesson spec + research notes verbatim
+   b. task(writer, ...) - pass the lesson spec + research notes verbatim
       + hard rules. The writer will call a frontend mutation.
-   d. If the user rejects or asks for fixes later: task(reviser, ...)
+   c. If the user rejects or asks for fixes later: task(reviser, ...)
       with the concrete issue list and the target lessonId. Hard cap:
       2 revision rounds per lesson.
-   e. updatePlanItem -> done.
-5. Finish with a SHORT confirmation message (1-3 lines). Do not restate
+   d. After each lesson finishes, update write_todos: mark that one
+      complete and flip the next one to in_progress.
+4. Finish with a SHORT confirmation message (1-3 lines). Do not restate
    the lesson - the user already sees it in the editor.
 
 ## Hard rules you enforce by how you brief subagents
@@ -239,10 +238,11 @@ SUBAGENTS: list[SubAgent] = [
 ]
 
 
-SUPERVISOR_TOOLS = [setPlan, updatePlanItem]
+SUPERVISOR_TOOLS: list = []
 """Supervisor has NO web tools and NO lesson mutations on purpose -
 those are locked inside the researcher / writer / reviser subagents.
-write_todos and task are injected automatically by deepagents."""
+write_todos and task are injected automatically by deepagents, so the
+supervisor starts with an empty custom tool list."""
 
 
 def build_graph():

@@ -3,17 +3,23 @@
 The classic graph builds frontend tool definitions dynamically from
 `config.configurable.frontend_tools` and routes them through a custom node.
 `deepagents.create_deep_agent` compiles tools at build time, so we pre-declare
-the six known mutations (4 lesson + 2 plan) as real LangChain tools whose body
-calls `langgraph.types.interrupt(...)` — the frontend already handles that
-interrupt shape via `useStream`. After confirmation we return a
-`Command(update=...)` that also writes `last_authored_lesson` so the critic
-can run downstream.
+the known mutations as real LangChain tools whose body calls
+`langgraph.types.interrupt(...)` — the frontend already handles that interrupt
+shape via `useStream`. After confirmation we return a `Command(update=...)`
+that also writes `last_authored_lesson` so the critic can run downstream.
+
+IMPORTANT: to return a `Command(update=[ToolMessage(...)])` from a tool, the
+`ToolMessage.tool_call_id` MUST match the AIMessage's pending tool_call. We get
+it via `InjectedToolCallId` — reading it from `get_config().metadata` does NOT
+work (metadata does not contain the tool_call_id at runtime) and produces the
+error: ``Expected to have a matching ToolMessage in Command.update for tool
+'X', got: [ToolMessage(..., tool_call_id='')]``.
 """
 from __future__ import annotations
 import json
-from typing import Any
+from typing import Annotated, Any
 
-from langchain_core.tools import tool
+from langchain_core.tools import tool, InjectedToolCallId
 from langchain_core.messages import ToolMessage, SystemMessage
 from langgraph.types import Command, interrupt
 
@@ -71,20 +77,20 @@ def _finish(tc_id: str, tool_name: str, args: dict[str, Any], resume_value: Any)
 
 def _make_shell(name: str, description: str):
     @tool(name, description=description)
-    def _shell(**kwargs) -> str:
+    def _shell(
+        tool_call_id: Annotated[str, InjectedToolCallId],
+        **kwargs,
+    ) -> Command:
         """Frontend-executed mutation. The deep agent never sees the return
         value synchronously — LangGraph pauses on interrupt(), the browser
         executes the mutation, then resumes with a tool result."""
-        from langgraph.config import get_config  # lazy import
-        cfg = get_config() or {}
-        tc_id = (cfg.get("metadata") or {}).get("tool_call_id") or ""
         resume = interrupt({
             "type": "frontend_tool_call",
-            "tool_call_id": tc_id,
+            "tool_call_id": tool_call_id,
             "name": name,
             "args": kwargs,
         })
-        return _finish(tc_id, name, kwargs, resume)
+        return _finish(tool_call_id, name, kwargs, resume)
     _shell.name = name
     return _shell
 
@@ -126,4 +132,11 @@ FRONTEND_SHELL_TOOLS = [
     patchLessonBlocks,
     setPlan,
     updatePlanItem,
+]
+
+LESSON_SHELL_TOOLS = [
+    addLesson,
+    updateLessonContent,
+    appendLessonContent,
+    patchLessonBlocks,
 ]
