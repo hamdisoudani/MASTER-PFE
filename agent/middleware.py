@@ -74,13 +74,26 @@ def _boundary_indices(messages: list[BaseMessage]) -> list[int]:
     return idxs
 
 
-def _summarize_slice(slice_msgs: list[BaseMessage]) -> str:
-    """Deterministic, cheap summary — no extra LLM call.
+SUMMARY_PROMPT = (
+    "You are a conversation compaction tool for a multi-agent curriculum "
+    "authoring system (MASTER-PFE). Summarize the earlier portion of the "
+    "conversation below so a downstream LLM can continue the work WITHOUT "
+    "seeing the original messages. Be faithful and concrete.\n\n"
+    "Required sections (use exactly these headings):\n"
+    "### User intent\n"
+    "### Lessons & artifacts produced so far (ids, titles, status)\n"
+    "### Tools used and key results (names, counts, salient URLs/ids)\n"
+    "### Open issues / pending todos\n"
+    "### Decisions & constraints to preserve\n\n"
+    "Rules:\n"
+    "- Preserve EVERY lessonId, URL, and numeric fact that may be needed later.\n"
+    "- Do NOT invent facts. If unsure, say 'unclear'.\n"
+    "- Target 250-500 words. Plain text, no code fences."
+)
 
-    We include: the first user ask, tool names invoked, final AI gist.
-    For long-running agents this is enough to preserve intent without
-    re-sending full tool arg blobs.
-    """
+
+def _deterministic_summary(slice_msgs: list[BaseMessage]) -> str:
+    """Fallback summary when the LLM call is unavailable (no key, network error)."""
     bullets: list[str] = []
     first_user = next((m for m in slice_msgs if isinstance(m, HumanMessage)), None)
     if first_user:
@@ -102,7 +115,79 @@ def _summarize_slice(slice_msgs: list[BaseMessage]) -> str:
     if final_ai:
         t = str(final_ai.content)[:400].replace("\n", " ")
         bullets.append(f"- Last assistant note: {t}")
-    return "Conversation summary (earlier window elided to control context size):\n" + "\n".join(bullets)
+    return (
+        "Conversation summary (deterministic fallback — LLM summarizer "
+        "unavailable):\n" + "\n".join(bullets)
+    )
+
+
+def _render_slice_for_llm(slice_msgs: list[BaseMessage], char_budget: int = 48000) -> str:
+    """Render the slice as a compact transcript the summarizer LLM can read.
+
+    Elides tool args/results first so we don't feed 500kB of scraped HTML into
+    the summarization prompt, and hard-truncates at ``char_budget``.
+    """
+    elided = compact_tool_history(list(slice_msgs))
+    lines: list[str] = []
+    for m in elided:
+        if isinstance(m, HumanMessage):
+            role = "USER"
+            body = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
+        elif isinstance(m, AIMessage):
+            role = "ASSISTANT"
+            body = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
+            tcs = getattr(m, "tool_calls", None) or []
+            if tcs:
+                names = ", ".join(f"{tc.get('name')}({', '.join((tc.get('args') or {}).keys())})" for tc in tcs)
+                body = (body + "\n" if body else "") + f"[tool_calls: {names}]"
+        elif isinstance(m, ToolMessage):
+            role = f"TOOL({getattr(m, 'name', None) or 'result'})"
+            body = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
+        elif isinstance(m, SystemMessage):
+            role = "SYSTEM"
+            body = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
+        else:
+            continue
+        if not isinstance(body, str):
+            body = str(body)
+        body = body.strip()
+        if not body:
+            continue
+        lines.append(f"[{role}] {body}")
+    text = "\n\n".join(lines)
+    if len(text) > char_budget:
+        head = text[: char_budget // 2]
+        tail = text[-char_budget // 2 :]
+        text = head + f"\n\n…[{len(text) - char_budget} chars elided from middle]…\n\n" + tail
+    return text
+
+
+def _summarize_slice(slice_msgs: list[BaseMessage]) -> str:
+    """LLM-backed summary, with deterministic fallback on any failure.
+
+    We call the same LLM the agent uses (``agent.llm.get_llm``) at low temp
+    with a compact transcript of the older window. This mirrors what the
+    deep-graph ``SummarizationMiddleware`` does for the deep agent.
+    """
+    if not slice_msgs:
+        return ""
+    try:
+        from agent.llm import get_llm  # local import to avoid circular import at module load
+        llm = get_llm()
+        transcript = _render_slice_for_llm(slice_msgs)
+        resp = llm.invoke([
+            SystemMessage(content=SUMMARY_PROMPT),
+            HumanMessage(content=transcript),
+        ])
+        text = resp.content if isinstance(resp.content, str) else json.dumps(resp.content, default=str)
+        text = (text or "").strip()
+        if len(text) < 40:
+            raise RuntimeError("summary too short")
+        logger.info("compact_history: LLM summary produced (%d chars)", len(text))
+        return "Conversation summary (LLM-generated):\n" + text
+    except Exception as e:  # noqa: BLE001
+        logger.warning("compact_history: LLM summary failed (%s) — falling back to deterministic", e)
+        return _deterministic_summary(slice_msgs)
 
 
 def _elide_tool_args(ai: AIMessage) -> AIMessage:
