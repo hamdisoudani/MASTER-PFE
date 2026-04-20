@@ -95,26 +95,35 @@ def _make_shell(name: str, description: str):
     return _shell
 
 
-addLesson = _make_shell(
-    "addLesson",
-    "Create a NEW lesson inside a given chapter with full BlockNote content."
-    " Args: chapterId (str), title (str), content (list of BlockNote blocks).",
-)
-updateLessonContent = _make_shell(
-    "updateLessonContent",
-    "Replace an existing lesson's entire content."
-    " Args: lessonId (str), title (str, optional), content (list of blocks).",
-)
-appendLessonContent = _make_shell(
-    "appendLessonContent",
-    "Append blocks to the end of an existing lesson."
-    " Args: lessonId (str), blocks (list of BlockNote blocks).",
-)
-patchLessonBlocks = _make_shell(
-    "patchLessonBlocks",
-    "Surgically patch specific blocks by id inside an existing lesson."
-    " Args: lessonId (str), blocks (list of {id, block}).",
-)
+# ---------------------------------------------------------------------------
+# DEPRECATED (PR4) — lesson-mutation frontend shells.
+# These used to pause the graph with `interrupt()` so the browser could mutate
+# the zustand syllabus store. As of the `feat/supabase-mcp-curriculum` branch
+# the agent writes lessons directly to Supabase through the curriculum-mcp
+# server (see `agent/mcp_client.py` + `curriculum-mcp/`). The browser now
+# subscribes to Supabase realtime and does NOT execute these tools anymore.
+# Kept commented for reference while we finish migrating.
+# ---------------------------------------------------------------------------
+# addLesson = _make_shell(
+#     "addLesson",
+#     "Create a NEW lesson inside a given chapter with full BlockNote content."
+#     " Args: chapterId (str), title (str), content (list of BlockNote blocks).",
+# )
+# updateLessonContent = _make_shell(
+#     "updateLessonContent",
+#     "Replace an existing lesson's entire content."
+#     " Args: lessonId (str), title (str, optional), content (list of blocks).",
+# )
+# appendLessonContent = _make_shell(
+#     "appendLessonContent",
+#     "Append blocks to the end of an existing lesson."
+#     " Args: lessonId (str), blocks (list of BlockNote blocks).",
+# )
+# patchLessonBlocks = _make_shell(
+#     "patchLessonBlocks",
+#     "Surgically patch specific blocks by id inside an existing lesson."
+#     " Args: lessonId (str), blocks (list of {id, block}).",
+# )
 setPlan = _make_shell(
     "setPlan",
     "Publish a multi-step plan to the UI. Args: items (list of {id,title,status}).",
@@ -151,17 +160,22 @@ updatePlanItem = _make_shell(
 
 FRONTEND_SHELL_TOOLS = [
     askUser,
-    addLesson,
-    updateLessonContent,
-    appendLessonContent,
-    patchLessonBlocks,
+    # DEPRECATED (PR4) — moved to curriculum-mcp:
+    # addLesson,
+    # updateLessonContent,
+    # appendLessonContent,
+    # patchLessonBlocks,
     setPlan,
     updatePlanItem,
 ]
 
-LESSON_SHELL_TOOLS = [
-    addLesson,
-    updateLessonContent,
-    appendLessonContent,
-    patchLessonBlocks,
-]
+# DEPRECATED (PR4) — lesson mutations are now MCP tools, not frontend shells.
+# Kept as an empty list so existing imports (e.g. in agent/graph.py, nodes.py)
+# don't break while the migration finishes.
+LESSON_SHELL_TOOLS: list = []
+# LESSON_SHELL_TOOLS = [
+#     addLesson,
+#     updateLessonContent,
+#     appendLessonContent,
+#     patchLessonBlocks,
+# ]
