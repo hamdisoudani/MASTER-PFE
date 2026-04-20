@@ -9,7 +9,7 @@ import { useThreadSettingsStore } from "@/stores/thread-settings-store";
 import { useThreads, threadVariant } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { Markdown } from "@/components/chat/Markdown";
-import { AlertCircle, Ban, BookOpen, CheckCircle2, ChevronDown, ChevronRight, Circle, Eye, FileText, Layers, ListTodo, Loader2, OctagonAlert, Pencil, RotateCw, Send, Square, Wrench, XCircle, Zap, ZapOff } from "lucide-react";
+import { AlertCircle, Ban, BookOpen, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Eye, FileText, Layers, ListTodo, Loader2, OctagonAlert, Pencil, RotateCw, Send, Sparkles, Square, Users, Wrench, XCircle, Zap, ZapOff } from "lucide-react";
 import { usePlanStore } from "@/stores/plan-store";
 import { PlanCard } from "@/components/chat/PlanCard";
 import { PlanStrip } from "@/components/chat/PlanStrip";
@@ -359,7 +359,26 @@ const TOOL_META: Record<string, { label: string; icon: any; tone: string }> = {
   readLessonBlocks:    { label: "Read lesson blocks",   icon: Eye,       tone: "text-[var(--muted-foreground)]" },
   setPlan:             { label: "Plan",                 icon: ListTodo,  tone: "text-[var(--primary)]" },
   updatePlanItem:      { label: "Update plan item",     icon: ListTodo,  tone: "text-[var(--primary)]" },
+  task:                { label: "Dispatch subagent",    icon: Users,     tone: "text-fuchsia-400" },
 };
+
+function subagentIcon(name: string | null | undefined) {
+  switch (name) {
+    case "researcher": return Eye;
+    case "writer":     return Pencil;
+    case "reviser":    return Sparkles;
+    default:           return Bot;
+  }
+}
+
+function subagentTone(name: string | null | undefined) {
+  switch (name) {
+    case "researcher": return "text-sky-400";
+    case "writer":     return "text-emerald-400";
+    case "reviser":    return "text-amber-400";
+    default:           return "text-fuchsia-400";
+  }
+}
 
 function toolMeta(name: string | undefined) {
   if (!name) return { label: "Tool", icon: Wrench, tone: "text-[var(--muted-foreground)]" };
@@ -538,13 +557,123 @@ function ToolResultView({ name, result }: { name: string; result: ParsedResult }
 const ToolCallCard = memo(function ToolCallCard({
   call,
   result,
+  subagentMessages,
+  toolResults,
+  isStreaming,
 }: {
   call: ToolCall;
   result: ParsedResult;
+  subagentMessages?: AnyMsg[];
+  toolResults?: Map<string, string>;
+  isStreaming?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const isTask = call.name === "task";
+  const args = (call.args as Record<string, any>) ?? {};
+  const subagentName = isTask ? (args.subagent_type as string | undefined) ?? null : null;
+  const description = isTask ? (args.description as string | undefined) ?? "" : "";
+  const subMsgs = subagentMessages ?? [];
+  const running = result.status === "running";
+  // Auto-open while the task subagent is running, auto-close when it completes.
+  const [open, setOpen] = useState<boolean>(isTask ? running : false);
+  const prevRunning = useRef(running);
+  useEffect(() => {
+    if (!isTask) return;
+    if (prevRunning.current && !running) setOpen(false);
+    if (!prevRunning.current && running) setOpen(true);
+    prevRunning.current = running;
+  }, [isTask, running]);
+
+  const SubIcon = isTask ? subagentIcon(subagentName) : null;
   const meta = toolMeta(call.name);
   const Icon = meta.icon;
+
+  if (isTask) {
+    const tone = subagentTone(subagentName);
+    const label = subagentName
+      ? subagentName.charAt(0).toUpperCase() + subagentName.slice(1)
+      : "Subagent";
+    return (
+      <div
+        className={`rounded-md border bg-[var(--background)]/60 ${
+          running
+            ? "border-[var(--primary)]/50 shadow-[0_0_0_1px_var(--primary)]/10"
+            : "border-[var(--border)]"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-start gap-2 px-2.5 py-2 text-left hover:bg-[var(--muted)]/40 transition-colors"
+        >
+          {open ? <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" />}
+          <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--muted)]/60 ${tone}`}>
+            {SubIcon ? <SubIcon className={`h-3.5 w-3.5 ${running ? "animate-pulse" : ""}`} /> : null}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className={`text-[12px] font-semibold ${tone}`}>{label}</span>
+              <span className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">subagent</span>
+              {running && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[var(--primary)]/40 bg-[var(--primary)]/10 px-1.5 py-0.5 text-[9px] font-medium text-[var(--primary)]">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  thinking
+                </span>
+              )}
+              {!running && subMsgs.length > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--muted)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--muted-foreground)]">
+                  {subMsgs.length} msg{subMsgs.length === 1 ? "" : "s"}
+                </span>
+              )}
+              <span className="ml-auto"><ToolStatusBadge status={result.status} /></span>
+            </div>
+            {description && (
+              <div className="mt-0.5 line-clamp-2 text-[11px] text-[var(--muted-foreground)]">
+                {description}
+              </div>
+            )}
+          </div>
+        </button>
+        {open && (
+          <div className="border-t border-[var(--border)] bg-[var(--muted)]/20 px-2.5 py-2 space-y-2">
+            {subMsgs.length === 0 ? (
+              <div className="flex items-center gap-2 text-[11px] text-[var(--muted-foreground)] italic">
+                {running ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Waiting for {label} to think…
+                  </>
+                ) : (
+                  <>No streamed messages captured for this run.</>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {subMsgs.map((sm, i) => (
+                  <SubagentTrace
+                    key={(sm.id as string) ?? `sub-${i}`}
+                    m={sm}
+                    toolResults={toolResults ?? new Map()}
+                    isStreaming={!!isStreaming}
+                  />
+                ))}
+              </div>
+            )}
+            {!running && result.raw && (
+              <details className="pt-1 border-t border-[var(--border)]/70">
+                <summary className="cursor-pointer select-none text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+                  Final summary returned to supervisor
+                </summary>
+                <div className="mt-1.5">
+                  <ToolResultView name={call.name ?? ""} result={result} />
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="rounded border border-[var(--border)] bg-[var(--background)]/50">
       <button
@@ -569,16 +698,62 @@ const ToolCallCard = memo(function ToolCallCard({
   );
 });
 
+/**
+ * Compact bubble used INSIDE a Task tool card to render a single streamed
+ * message from a subagent (researcher/writer/reviser). Differs from the
+ * top-level MessageBubble in that it is denser, does not re-emit the
+ * "live · subagent" badge (the parent card already shows that context),
+ * and renders nested tool calls without letting them escape the card.
+ */
+const SubagentTrace = memo(function SubagentTrace({
+  m,
+  toolResults,
+  isStreaming,
+}: {
+  m: AnyMsg;
+  toolResults: Map<string, string>;
+  isStreaming: boolean;
+}) {
+  const role = m.type ?? m.role;
+  if (role === "tool" || role === "human" || role === "user") return null;
+  const text = messageText(m);
+  const calls = getToolCalls(m);
+  if (!text && !calls.length) return null;
+  const sub = subagentOrigin(m);
+  const Icon = subagentIcon(sub);
+  const tone = subagentTone(sub);
+  return (
+    <div className="flex gap-2">
+      <div className={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--background)] ${tone}`}>
+        <Icon className="h-3 w-3" />
+      </div>
+      <div className="flex-1 min-w-0 rounded border border-[var(--border)]/70 bg-[var(--background)]/70 px-2 py-1.5">
+        {text ? <Markdown source={text} /> : null}
+        {calls.length > 0 && (
+          <ToolCallTimeline
+            calls={calls}
+            results={toolResults}
+            isLastAssistant={false}
+            isStreaming={isStreaming}
+          />
+        )}
+      </div>
+    </div>
+  );
+});
+
 const ToolCallTimeline = memo(function ToolCallTimeline({
   calls,
   results,
   isLastAssistant,
   isStreaming,
+  subagentsByTaskCallId,
 }: {
   calls: ToolCall[];
   results: Map<string, string>;
   isLastAssistant: boolean;
   isStreaming: boolean;
+  subagentsByTaskCallId?: Map<string, AnyMsg[]>;
 }) {
   if (!calls.length) return null;
   return (
@@ -586,7 +761,19 @@ const ToolCallTimeline = memo(function ToolCallTimeline({
       {calls.map((tc, idx) => {
         const raw = tc.id ? results.get(tc.id) : undefined;
         const result = parseResult(raw, isLastAssistant, isStreaming);
-        return <ToolCallCard key={tc.id ?? idx} call={tc} result={result} />;
+        const subMsgs = tc.name === "task" && tc.id
+          ? subagentsByTaskCallId?.get(tc.id) ?? []
+          : undefined;
+        return (
+          <ToolCallCard
+            key={tc.id ?? idx}
+            call={tc}
+            result={result}
+            subagentMessages={subMsgs}
+            toolResults={results}
+            isStreaming={isStreaming}
+          />
+        );
       })}
     </div>
   );
@@ -625,11 +812,13 @@ const MessageBubble = memo(function MessageBubble({
   toolResults,
   isLastAssistant,
   isStreaming,
+  subagentsByTaskCallId,
 }: {
   m: AnyMsg;
   toolResults: Map<string, string>;
   isLastAssistant: boolean;
   isStreaming: boolean;
+  subagentsByTaskCallId?: Map<string, AnyMsg[]>;
 }) {
   const role = m.type ?? m.role;
   const isUser = role === "human" || role === "user";
@@ -682,7 +871,7 @@ const MessageBubble = memo(function MessageBubble({
           <Markdown source={text} />
         )
       ) : null}
-      {calls.length > 0 && <ToolCallTimeline calls={calls} results={toolResults} isLastAssistant={isLastAssistant} isStreaming={isStreaming} />}
+      {calls.length > 0 && <ToolCallTimeline calls={calls} results={toolResults} isLastAssistant={isLastAssistant} isStreaming={isStreaming} subagentsByTaskCallId={subagentsByTaskCallId} />}
     </div>
   );
 });
@@ -893,6 +1082,53 @@ export function ChatPane() {
       map.set(id, messageText(m));
     }
     return map;
+  }, [messages]);
+
+  // Group ephemeral subagent messages (streamed via streamSubgraphs:true)
+  // under the supervisor's matching `task(...)` tool call, so the UI can
+  // render each task call as a collapsible mini-chat instead of flattening
+  // them into the supervisor thread. Matching is done by:
+  //   1) tracking open task() tool_calls as we walk messages in order,
+  //   2) attaching any message whose subagentOrigin() matches the
+  //      subagent_type arg of the most recent open task call,
+  //   3) closing a task when its ToolMessage result arrives.
+  const { subagentsByTaskCallId, hiddenMessageIds } = useMemo(() => {
+    const groups = new Map<string, AnyMsg[]>();
+    const hidden = new Set<string>();
+    type ActiveTask = { id: string; subagent: string };
+    const active: ActiveTask[] = [];
+    messages.forEach((m, i) => {
+      const role = m.type ?? m.role;
+      if (role === "tool") {
+        const tcid = (m as any).tool_call_id as string | undefined;
+        if (tcid) {
+          const idx = active.findIndex((a) => a.id === tcid);
+          if (idx >= 0) active.splice(idx, 1);
+        }
+        return;
+      }
+      const sub = subagentOrigin(m);
+      if (sub && active.length > 0) {
+        let match: ActiveTask | undefined;
+        for (let k = active.length - 1; k >= 0; k--) {
+          if (active[k].subagent === sub) { match = active[k]; break; }
+        }
+        if (!match) match = active[active.length - 1];
+        const arr = groups.get(match.id) ?? [];
+        arr.push(m);
+        groups.set(match.id, arr);
+        hidden.add((m.id as string) ?? `__idx:${i}`);
+      }
+      const calls = getToolCalls(m);
+      for (const tc of calls) {
+        if (tc.name === "task" && tc.id) {
+          const subType = ((tc.args as any)?.subagent_type ?? "") as string;
+          active.push({ id: tc.id, subagent: subType });
+          if (!groups.has(tc.id)) groups.set(tc.id, []);
+        }
+      }
+    });
+    return { subagentsByTaskCallId: groups, hiddenMessageIds: hidden };
   }, [messages]);
   const stopReason = ((stream as any).values?.stop_reason ?? null) as string | null;
   // useStream surfaces the last run error here (network, tool-call JSON, LLM
@@ -1180,6 +1416,8 @@ export function ChatPane() {
           const role = m.type ?? m.role;
           const isAssistant = role !== "human" && role !== "user" && role !== "tool";
           const isLast = isAssistant && i === messages.length - 1;
+          const key = (m.id as string) ?? `__idx:${i}`;
+          if (hiddenMessageIds.has(key)) return null;
           return (
             <MessageBubble
               key={visibleKey(m, i)}
@@ -1187,6 +1425,7 @@ export function ChatPane() {
               toolResults={toolResults}
               isLastAssistant={isLast}
               isStreaming={isStreaming}
+              subagentsByTaskCallId={subagentsByTaskCallId}
             />
           );
         })}
