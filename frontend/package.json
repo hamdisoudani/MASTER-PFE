@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "tsx tests/frontendTools.test.ts"
   },
   "dependencies": {
     "@blocknote/core": "^0.48.0",

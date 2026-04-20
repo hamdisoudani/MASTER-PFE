@@ -1374,17 +1374,38 @@ export function ChatPane() {
     // Normalize null → undefined/[] so the store APIs (which use `?:` optional
     // typing) don't complain.
     const nn = <T,>(v: T | null | undefined): T | undefined => (v ?? undefined) as T | undefined;
+    // Guardrails: fail fast with a structured error the agent can recover from
+    // rather than silently persisting a bad mutation or blowing up the store.
+    const requireNonEmptyBlocks = (blocks: unknown, field: string) => {
+      const arr = Array.isArray(blocks) ? blocks : [];
+      if (arr.length === 0) {
+        const err: any = new Error(`${field} is empty`);
+        err.code = "empty_blocks";
+        err.hint = `Provide at least one BlockNote block in "${field}". If you want to clear content, call patchLessonBlocks with op="delete".`;
+        throw err;
+      }
+      return arr;
+    };
+    const requireId = (id: unknown, field: string) => {
+      if (typeof id !== "string" || !id.trim()) {
+        const err: any = new Error(`${field} is missing`);
+        err.code = "missing_arg";
+        err.hint = `"${field}" must be a non-empty string. Call getSyllabusOutline first if you are unsure of the id.`;
+        throw err;
+      }
+      return id;
+    };
     const dispatch: Record<string, () => any> = {
-      createSyllabus: () => store.createSyllabus(a.id, a.title, a.subject, nn(a.description)),
-      addChapter: () => store.addChapter(a.syllabusId, a.chapterId, a.title, nn(a.description)),
-      addLesson: () => store.addLesson(a.chapterId, a.lessonId, a.title, a.content ?? []),
-      updateLessonContent: () => store.updateLessonContent(a.lessonId, a.content ?? []),
-      appendLessonContent: () => store.appendLessonContent(a.lessonId, a.blocks ?? []),
+      createSyllabus: () => store.createSyllabus(requireId(a.id, "id"), a.title, a.subject, nn(a.description)),
+      addChapter: () => store.addChapter(requireId(a.syllabusId, "syllabusId"), requireId(a.chapterId, "chapterId"), a.title, nn(a.description)),
+      addLesson: () => store.addLesson(requireId(a.chapterId, "chapterId"), requireId(a.lessonId, "lessonId"), a.title, a.content ?? []),
+      updateLessonContent: () => store.updateLessonContent(requireId(a.lessonId, "lessonId"), requireNonEmptyBlocks(a.content, "content")),
+      appendLessonContent: () => store.appendLessonContent(requireId(a.lessonId, "lessonId"), requireNonEmptyBlocks(a.blocks, "blocks")),
       patchLessonBlocks: () =>
-        store.patchLessonBlocks(a.lessonId, a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
+        store.patchLessonBlocks(requireId(a.lessonId, "lessonId"), a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
       getSyllabusOutline: () => store.getSyllabusOutline(nn(a.syllabusId)),
       readLessonBlocks: () =>
-        store.readLessonBlocks(a.lessonId, a.startBlock, a.endBlock),
+        store.readLessonBlocks(requireId(a.lessonId, "lessonId"), a.startBlock, a.endBlock),
       setPlan: () =>
         plan.setPlan(
           (a.items ?? []).map((it: any) => ({
@@ -1406,7 +1427,13 @@ export function ChatPane() {
         result = { ok: true, result: out ?? null };
       }
     } catch (e: any) {
-      result = { ok: false, error: String(e?.message ?? e) };
+      result = {
+        ok: false,
+        error: String(e?.message ?? e),
+        code: e?.code ?? "tool_error",
+        hint: e?.hint,
+        retryable: true,
+      };
     }
     resumeWith(result);
     setResumeBusy(false);
@@ -1480,6 +1507,40 @@ export function ChatPane() {
     }
     submitUserText(text);
   }, [isStreaming, messages, submitUserText]);
+
+  // Auto-retry transient stream errors (network blips / upstream 502s) so a
+  // single provider hiccup doesn't force the user to hit Retry manually. We
+  // cap at MAX_AUTO_RETRIES per distinct error instance and skip obvious
+  // non-retryable errors (auth, 4xx other than 408/429).
+  const autoRetryRef = useRef<{ err: unknown; count: number } | null>(null);
+  const MAX_AUTO_RETRIES = 2;
+  useEffect(() => {
+    if (!streamError) { autoRetryRef.current = null; return; }
+    if (isStreaming) return;
+    const prev = autoRetryRef.current;
+    const sameErr = prev && prev.err === streamError;
+    const count = sameErr ? prev!.count : 0;
+    if (count >= MAX_AUTO_RETRIES) return;
+    const msg = ((): string => {
+      const e: any = streamError;
+      return String(e?.message ?? e?.error ?? e ?? "");
+    })().toLowerCase();
+    const isRetryable =
+      msg.includes("network") ||
+      msg.includes("fetch") ||
+      msg.includes("econnreset") ||
+      msg.includes("timeout") ||
+      msg.includes("timed out") ||
+      msg.includes("502") ||
+      msg.includes("503") ||
+      msg.includes("504") ||
+      msg.includes("429");
+    if (!isRetryable) return;
+    autoRetryRef.current = { err: streamError, count: count + 1 };
+    const delay = 800 * Math.pow(2, count);
+    const t = setTimeout(() => { try { onRetry(); } catch {} }, delay);
+    return () => clearTimeout(t);
+  }, [streamError, isStreaming, onRetry]);
 
   const onStop = useCallback(async () => {
     // SDK exposes the active run id at `stream.runId` or `stream.meta?.runId`

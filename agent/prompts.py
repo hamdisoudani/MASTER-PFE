@@ -249,6 +249,29 @@ the cap, stop revising that lesson and tell the user which parts are
 still below standard so they can decide."""
 
 
+ERROR_RECOVERY = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Tool error recovery
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When a frontend tool returns {ok:false, ...} do NOT stop the run. Read the
+error and react:
+
+  - code="empty_blocks"  → you called updateLessonContent/appendLessonContent
+    with no blocks. Rebuild the block list (paragraph/heading/bulletListItem
+    with a non-empty content array) and retry ONCE. If you really meant to
+    clear the lesson, switch to patchLessonBlocks with op="delete".
+  - code="missing_arg"   → the id you passed is empty/unknown. Call
+    getSyllabusOutline first to get the real id, then retry.
+  - error contains "lesson not found" → call getSyllabusOutline and retry
+    against an id that actually exists.
+  - error="user_rejected" → ask the user what they want different, do not
+    retry the same call silently.
+  - Any other transient error → retry at most ONCE with the same args; on a
+    second failure summarize the blocker to the user and move on.
+
+Never retry the exact same failing call more than once. Never enter a loop of
+identical failing tool calls."""
+
 def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None, editor_context_override: dict[str, Any] | None = None) -> str:
     defs = frontend_tool_defs or []
     ed_ctx = editor_context_override if editor_context_override is not None else state.get("editor_context")
@@ -261,6 +284,7 @@ def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, An
         INTERACTIVE_QUESTIONS,
         BATCH_WRITING,
         CRITIC_GATE,
+        ERROR_RECOVERY,
         LOOP,
         _render_editor_context(ed_ctx),
     ]

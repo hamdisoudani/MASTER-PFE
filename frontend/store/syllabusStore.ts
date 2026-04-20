@@ -65,6 +65,42 @@ export interface ThreadSyllabusSlice {
   lastMutation: Record<string, LessonMutation>;
 }
 
+
+/**
+ * Coerce any persisted or agent-supplied "content" value into a safe Block[].
+ * Earlier agent runs sometimes sent a JSON string or an object like {blocks:[...]}
+ * which caused runtime crashes (".slice(...).map is not a function") when the
+ * store assumed a plain array. This normalizes without losing data.
+ */
+export function toBlockArray(raw: unknown): Block[] {
+  if (Array.isArray(raw)) return raw as Block[];
+  if (raw == null) return [];
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed as Block[];
+      if (parsed && Array.isArray((parsed as any).blocks)) return (parsed as any).blocks as Block[];
+    } catch { /* fall through to markdown-wrap */ }
+    return [
+      {
+        id: `blk_${Math.random().toString(36).slice(2, 10)}`,
+        type: 'paragraph',
+        props: {},
+        content: [{ type: 'text', text: trimmed, styles: {} }],
+        children: [],
+      } as Block,
+    ];
+  }
+  if (typeof raw === 'object') {
+    const obj = raw as any;
+    if (Array.isArray(obj.blocks)) return obj.blocks as Block[];
+    if (Array.isArray(obj.content)) return obj.content as Block[];
+  }
+  return [];
+}
+
 const DEFAULT_BUCKET = '__default__';
 
 const emptySlice = (): ThreadSyllabusSlice => ({
@@ -264,7 +300,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
                       ...ch,
                       lessons: [
                         ...ch.lessons.filter((l) => l.id !== lessonId),
-                        { id: lessonId, title, content: content || [] },
+                        { id: lessonId, title, content: toBlockArray(content) },
                       ],
                     }
                   : ch
@@ -283,7 +319,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
               chapters: x.chapters.map((ch) => ({
                 ...ch,
                 lessons: ch.lessons.map((l) =>
-                  l.id === lessonId ? { ...l, content } : l
+                  l.id === lessonId ? { ...l, content: toBlockArray(content) } : l
                 ),
               })),
             })),
@@ -300,7 +336,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
                 ...ch,
                 lessons: ch.lessons.map((l) =>
                   l.id === lessonId
-                    ? { ...l, content: [...(l.content || []), ...blocks] }
+                    ? { ...l, content: [...toBlockArray(l.content), ...toBlockArray(blocks)] }
                     : l
                 ),
               })),
@@ -418,13 +454,13 @@ export const useSyllabusStore = create<SyllabusStore>()(
                 lessons: ch.lessons.map((l) => {
                   if (l.id !== lessonId) return l;
                   found = true;
-                  const current = l.content || [];
+                  const current = toBlockArray(l.content);
                   const total = current.length;
                   const start1 = Math.max(1, Math.floor(startBlock || 1));
                   const end1 = endBlock == null ? start1 : Math.max(start1, Math.floor(endBlock));
                   const startIdx = Math.min(start1 - 1, total);
                   const endIdx = Math.min(end1, total);
-                  const insertBlocks = Array.isArray(blocks) ? blocks : [];
+                  const insertBlocks = toBlockArray(blocks);
                   let nextContent = current;
                   let changed = 0;
                   if (op === 'replace') {
@@ -502,7 +538,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
             lessons: ch.lessons.map((l) => ({
               id: l.id,
               title: l.title,
-              blockCount: (l.content || []).length,
+              blockCount: toBlockArray(l.content).length,
             })),
           })),
           allSyllabi,
@@ -513,12 +549,12 @@ export const useSyllabusStore = create<SyllabusStore>()(
         const { getLessonById } = get();
         const lesson = getLessonById(lessonId);
         if (!lesson) return { ok: false, error: `lesson not found: ${lessonId}` };
-        const total = (lesson.content || []).length;
+        const total = toBlockArray(lesson.content).length;
         const start1 = Math.max(1, Math.floor(startBlock || 1));
         const end1 = Math.max(start1, Math.floor(endBlock || total));
         const startIdx = Math.min(start1 - 1, total);
         const endIdx = Math.min(end1, total);
-        const slice = (lesson.content || []).slice(startIdx, endIdx);
+        const slice = toBlockArray(lesson.content).slice(startIdx, endIdx);
         const blocks = slice.map((b, i) => {
           const text = (b.content || [])
             .map((c: any) => (typeof c?.text === 'string' ? c.text : ''))
