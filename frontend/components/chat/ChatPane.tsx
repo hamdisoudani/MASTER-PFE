@@ -1323,22 +1323,6 @@ export function ChatPane() {
   // effect and the sync onApprove/onReject guards.
   const handledIdsRef = useRef<Set<string>>(new Set());
 
-
-  const buildRunConfig = useCallback(() => {
-    let editor_context: any = null;
-    try {
-      editor_context = store.getSyllabusOutline();
-    } catch {
-      editor_context = null;
-    }
-    return {
-      configurable: {
-        frontend_tools: FRONTEND_TOOLS,
-        editor_context,
-      },
-    } as const;
-  }, [store]);
-
   const resumeWith = useCallback(
     (result: any) => {
       try {
@@ -1353,14 +1337,14 @@ export function ChatPane() {
         // ReAct loop alive until the agent produces a final text reply.
         (stream as any).submit(undefined, {
           command: { resume: result },
-          config: buildRunConfig(),
+          config: { configurable: { frontend_tools: FRONTEND_TOOLS } },
           streamSubgraphs: true,
         });
       } catch (e) {
         console.error("resume failed", e);
       }
     },
-    [stream, buildRunConfig]
+    [stream]
   );
 
   const onApprove = useCallback(async () => {
@@ -1374,38 +1358,17 @@ export function ChatPane() {
     // Normalize null → undefined/[] so the store APIs (which use `?:` optional
     // typing) don't complain.
     const nn = <T,>(v: T | null | undefined): T | undefined => (v ?? undefined) as T | undefined;
-    // Guardrails: fail fast with a structured error the agent can recover from
-    // rather than silently persisting a bad mutation or blowing up the store.
-    const requireNonEmptyBlocks = (blocks: unknown, field: string) => {
-      const arr = Array.isArray(blocks) ? blocks : [];
-      if (arr.length === 0) {
-        const err: any = new Error(`${field} is empty`);
-        err.code = "empty_blocks";
-        err.hint = `Provide at least one BlockNote block in "${field}". If you want to clear content, call patchLessonBlocks with op="delete".`;
-        throw err;
-      }
-      return arr;
-    };
-    const requireId = (id: unknown, field: string) => {
-      if (typeof id !== "string" || !id.trim()) {
-        const err: any = new Error(`${field} is missing`);
-        err.code = "missing_arg";
-        err.hint = `"${field}" must be a non-empty string. Call getSyllabusOutline first if you are unsure of the id.`;
-        throw err;
-      }
-      return id;
-    };
     const dispatch: Record<string, () => any> = {
-      createSyllabus: () => store.createSyllabus(requireId(a.id, "id"), a.title, a.subject, nn(a.description)),
-      addChapter: () => store.addChapter(requireId(a.syllabusId, "syllabusId"), requireId(a.chapterId, "chapterId"), a.title, nn(a.description)),
-      addLesson: () => store.addLesson(requireId(a.chapterId, "chapterId"), requireId(a.lessonId, "lessonId"), a.title, a.content ?? []),
-      updateLessonContent: () => store.updateLessonContent(requireId(a.lessonId, "lessonId"), requireNonEmptyBlocks(a.content, "content")),
-      appendLessonContent: () => store.appendLessonContent(requireId(a.lessonId, "lessonId"), requireNonEmptyBlocks(a.blocks, "blocks")),
+      createSyllabus: () => store.createSyllabus(a.id, a.title, a.subject, nn(a.description)),
+      addChapter: () => store.addChapter(a.syllabusId, a.chapterId, a.title, nn(a.description)),
+      addLesson: () => store.addLesson(a.chapterId, a.lessonId, a.title, a.content ?? []),
+      updateLessonContent: () => store.updateLessonContent(a.lessonId, a.content ?? []),
+      appendLessonContent: () => store.appendLessonContent(a.lessonId, a.blocks ?? []),
       patchLessonBlocks: () =>
-        store.patchLessonBlocks(requireId(a.lessonId, "lessonId"), a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
+        store.patchLessonBlocks(a.lessonId, a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
       getSyllabusOutline: () => store.getSyllabusOutline(nn(a.syllabusId)),
       readLessonBlocks: () =>
-        store.readLessonBlocks(requireId(a.lessonId, "lessonId"), a.startBlock, a.endBlock),
+        store.readLessonBlocks(a.lessonId, a.startBlock, a.endBlock),
       setPlan: () =>
         plan.setPlan(
           (a.items ?? []).map((it: any) => ({
@@ -1427,13 +1390,7 @@ export function ChatPane() {
         result = { ok: true, result: out ?? null };
       }
     } catch (e: any) {
-      result = {
-        ok: false,
-        error: String(e?.message ?? e),
-        code: e?.code ?? "tool_error",
-        hint: e?.hint,
-        retryable: true,
-      };
+      result = { ok: false, error: String(e?.message ?? e) };
     }
     resumeWith(result);
     setResumeBusy(false);
@@ -1479,12 +1436,12 @@ export function ChatPane() {
       stream.submit(
         { messages: [{ role: "user", content: text }] },
         {
-          config: buildRunConfig(),
+          config: { configurable: { frontend_tools: FRONTEND_TOOLS } },
           streamSubgraphs: true,
         } as any
       );
     },
-    [stream, buildRunConfig]
+    [stream]
   );
 
   const onSend = useCallback(() => {
@@ -1651,7 +1608,7 @@ export function ChatPane() {
         {interruptValue && interruptValue.name === "askUser" && (
           <AskUserCard call={interruptValue} busy={resumeBusy} onSubmit={onSubmitAskUser} onReject={onReject} />
         )}
-        {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks", "askUser"]).has(interruptValue.name) && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
+        {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks", "askUser"]).has(interruptValue.name) && !autoAccept && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
         {streamError && !isStreaming && (
           <ErrorBubble error={streamError} onRetry={onRetry} />
         )}
