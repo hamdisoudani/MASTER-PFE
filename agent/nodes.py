@@ -35,7 +35,7 @@ from langgraph.errors import GraphInterrupt
 
 from agent.critic import MAX_REVISIONS, evaluate_lesson, format_feedback
 from agent.llm import get_llm, get_model_family
-from agent.middleware import compact_history, ensure_no_empty_ai
+from agent.middleware import compact_history, ensure_no_empty_ai, normalize_system_messages
 from agent.prompts import build_system_prompt
 from agent.state import AgentState
 from agent.tools import PYTHON_TOOLS, PYTHON_TOOL_NAMES
@@ -80,48 +80,6 @@ def _frontend_tool_names(config: RunnableConfig) -> set[str]:
     }
 
 
-def _sanitize_for_mistral(messages: list) -> list:
-    cleaned: list = []
-    pending_tool_ids: set[str] = set()
-    for m in messages:
-        if isinstance(m, AIMessage):
-            for tc in (getattr(m, "tool_calls", None) or []):
-                if tc.get("id"):
-                    pending_tool_ids.add(tc["id"])
-            cleaned.append(m)
-            continue
-        if isinstance(m, ToolMessage):
-            if m.tool_call_id in pending_tool_ids:
-                pending_tool_ids.discard(m.tool_call_id)
-                cleaned.append(m)
-            continue
-        if isinstance(m, (HumanMessage, SystemMessage)):
-            if cleaned and isinstance(cleaned[-1], ToolMessage):
-                cleaned.append(AIMessage(content=""))
-            if (
-                isinstance(m, HumanMessage)
-                and cleaned
-                and isinstance(cleaned[-1], HumanMessage)
-            ):
-                prev = cleaned[-1]
-                merged = (prev.content or "") + ("\n\n" if prev.content and m.content else "") + (m.content or "")
-                cleaned[-1] = HumanMessage(content=merged)
-                continue
-            cleaned.append(m)
-            continue
-        cleaned.append(m)
-    while cleaned and isinstance(cleaned[0], ToolMessage):
-        cleaned.pop(0)
-    return cleaned
-
-
-def _provider_sanitize(messages: list) -> list:
-    family = get_model_family()
-    if family == "mistral":
-        return _sanitize_for_mistral(messages)
-    return messages
-
-
 async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     llm = get_llm()
     frontend_defs = _frontend_tool_defs(config)
@@ -137,10 +95,15 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
     raw = list(state.get("messages", []))
     compacted = compact_history(raw, token_budget=CONTEXT_TOKEN_BUDGET)
     compacted = ensure_no_empty_ai(compacted)
-    messages = _provider_sanitize(compacted)
+    messages = normalize_system_messages(compacted)
+
+    cfg = (config or {}).get("configurable", {}) or {}
+    editor_ctx = cfg.get("editor_context")
+    if editor_ctx is None:
+        editor_ctx = state.get("editor_context")
 
     full_messages = [
-        SystemMessage(content=build_system_prompt(state, _frontend_tool_defs(config)))
+        SystemMessage(content=build_system_prompt(state, _frontend_tool_defs(config), editor_ctx))
     ] + messages
 
     try:

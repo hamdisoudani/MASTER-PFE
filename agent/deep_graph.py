@@ -27,10 +27,14 @@ picks the variant at thread creation and stores it in thread metadata
 (`variant: "classic" | "deep"`); once chosen it cannot change.
 """
 from __future__ import annotations
+import json
 import logging
+from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.middleware.subagents import SubAgent
+from langchain.agents.middleware.types import AgentMiddleware
+from langchain_core.messages import HumanMessage
 
 from agent.checkpointer import get_checkpointer
 from agent.frontend_shells import (
@@ -44,6 +48,58 @@ from agent.llm import get_llm
 from agent.tools import web_search, scrape_page
 
 logger = logging.getLogger(__name__)
+
+
+class EditorContextMiddleware(AgentMiddleware):
+    """Inject the live syllabus/chapters/lessons SKELETON into every LLM call.
+
+    The frontend sends its current outline (titles + ids + block counts, no
+    lesson content) through config.configurable.editor_context on every
+    submit/resume. Before each model call we check the latest messages and,
+    if a fresh skeleton snapshot isn't already present, prepend a tagged
+    HumanMessage carrying it. Lesson content itself is NOT sent here —
+    the agent can pull any specific lesson via readLessonBlocks.
+    """
+
+    _TAG = "[editor-context-skeleton]"
+
+    def _serialize(self, ed: Any) -> str:
+        try:
+            return json.dumps(ed, default=str, ensure_ascii=False)[:4000]
+        except Exception:
+            return str(ed)[:4000]
+
+    def _recent_has_skeleton(self, messages: list) -> bool:
+        for m in reversed(messages[-6:]):
+            content = getattr(m, "content", "") or ""
+            if isinstance(content, str) and self._TAG in content:
+                return True
+        return False
+
+    def _build(self, state: dict, runtime: Any) -> dict | None:
+        ed = None
+        try:
+            cfg = (getattr(runtime, "config", None) or {}).get("configurable", {}) or {}
+            ed = cfg.get("editor_context")
+        except Exception:
+            ed = None
+        if not ed:
+            return None
+        messages = list(state.get("messages") or [])
+        if self._recent_has_skeleton(messages):
+            return None
+        note = (
+            f"{self._TAG} Current syllabus SKELETON from the editor (titles + ids + "
+            "block counts only; lesson content NOT inlined — use readLessonBlocks "
+            "to read any specific lesson):\n" + self._serialize(ed)
+        )
+        return {"messages": [HumanMessage(content=note)]}
+
+    def before_model(self, state, runtime):  # type: ignore[override]
+        return self._build(state, runtime)
+
+    async def abefore_model(self, state, runtime):  # type: ignore[override]
+        return self._build(state, runtime)
 
 
 SUPERVISOR_PROMPT = """You are MASTER-PFE's deep curriculum SUPERVISOR.
@@ -311,6 +367,7 @@ def build_graph():
         tools=SUPERVISOR_TOOLS,
         system_prompt=SUPERVISOR_PROMPT,
         subagents=SUBAGENTS,
+        middleware=[EditorContextMiddleware()],
         checkpointer=get_checkpointer(),
     )
     return agent

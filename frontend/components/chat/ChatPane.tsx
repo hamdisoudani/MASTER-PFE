@@ -1323,6 +1323,22 @@ export function ChatPane() {
   // effect and the sync onApprove/onReject guards.
   const handledIdsRef = useRef<Set<string>>(new Set());
 
+
+  const buildRunConfig = useCallback(() => {
+    let editor_context: any = null;
+    try {
+      editor_context = store.getSyllabusOutline();
+    } catch {
+      editor_context = null;
+    }
+    return {
+      configurable: {
+        frontend_tools: FRONTEND_TOOLS,
+        editor_context,
+      },
+    } as const;
+  }, [store]);
+
   const resumeWith = useCallback(
     (result: any) => {
       try {
@@ -1337,14 +1353,14 @@ export function ChatPane() {
         // ReAct loop alive until the agent produces a final text reply.
         (stream as any).submit(undefined, {
           command: { resume: result },
-          config: { configurable: { frontend_tools: FRONTEND_TOOLS } },
+          config: buildRunConfig(),
           streamSubgraphs: true,
         });
       } catch (e) {
         console.error("resume failed", e);
       }
     },
-    [stream]
+    [stream, buildRunConfig]
   );
 
   const onApprove = useCallback(async () => {
@@ -1436,12 +1452,12 @@ export function ChatPane() {
       stream.submit(
         { messages: [{ role: "user", content: text }] },
         {
-          config: { configurable: { frontend_tools: FRONTEND_TOOLS } },
+          config: buildRunConfig(),
           streamSubgraphs: true,
         } as any
       );
     },
-    [stream]
+    [stream, buildRunConfig]
   );
 
   const onSend = useCallback(() => {

@@ -141,13 +141,29 @@ def _render_frontend_tool_docs(defs: list[dict[str, Any]]) -> str:
 
 
 def _render_editor_context(ed: dict[str, Any] | None) -> str:
+    """Render the syllabus/chapters/lessons skeleton from the client.
+
+    We intentionally receive ONLY the skeleton (titles + ids + block counts)
+    from the frontend, not lesson block content. Use readLessonBlocks to
+    pull a specific lesson's content on demand. This keeps token usage flat
+    even for long syllabi.
+    """
     if not ed:
         return ""
     try:
-        snap = json.dumps(ed, default=str)[:2000]
+        snap = json.dumps(ed, default=str, ensure_ascii=False)[:4000]
     except Exception:
-        snap = str(ed)[:2000]
-    return "\n\nCurrent editor context (read-only, possibly truncated):\n" + snap
+        snap = str(ed)[:4000]
+    return (
+        "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "CURRENT SYLLABUS SKELETON (read-only snapshot from the editor)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Below is the live outline of syllabi / chapters / lessons the user has\n"
+        "in the editor RIGHT NOW. It lists titles + ids + block counts only —\n"
+        "lesson content is NOT inlined to save tokens. To inspect a specific\n"
+        "lesson use readLessonBlocks(lessonId, startBlock, endBlock).\n\n"
+        + snap
+    )
 
 
 
@@ -233,8 +249,9 @@ the cap, stop revising that lesson and tell the user which parts are
 still below standard so they can decide."""
 
 
-def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None) -> str:
+def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None, editor_context_override: dict[str, Any] | None = None) -> str:
     defs = frontend_tool_defs or []
+    ed_ctx = editor_context_override if editor_context_override is not None else state.get("editor_context")
     parts = [
         ROLE,
         QUALITY,
@@ -245,6 +262,6 @@ def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, An
         BATCH_WRITING,
         CRITIC_GATE,
         LOOP,
-        _render_editor_context(state.get("editor_context")),
+        _render_editor_context(ed_ctx),
     ]
     return "\n\n".join(p for p in parts if p)

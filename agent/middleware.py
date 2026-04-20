@@ -242,3 +242,25 @@ def safe_tool_exception(exc: BaseException, tool_call_id: str) -> ToolMessage:
         tool_call_id=tool_call_id,
         status="error",
     )
+
+
+def normalize_system_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Provider-agnostic: keep system messages ONLY at index 0.
+
+    Any SystemMessage at index > 0 (e.g. critic feedback, user-rejection
+    nudges, compact_history summary injected mid-stream) is rewritten as
+    a HumanMessage tagged "[system-note] ..." so providers like Mistral
+    that require "System message must be at the beginning" stop rejecting
+    the conversation. Leading SystemMessages are left alone; chat_node
+    will prepend the real system prompt on top.
+    """
+    if not messages:
+        return messages
+    out: list[BaseMessage] = []
+    for i, m in enumerate(messages):
+        if isinstance(m, SystemMessage) and i != 0:
+            text = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
+            out.append(HumanMessage(content="[system-note] " + text))
+        else:
+            out.append(m)
+    return out
