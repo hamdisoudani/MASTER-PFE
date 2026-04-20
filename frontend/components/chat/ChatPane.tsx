@@ -8,6 +8,7 @@ import { useThreadStore } from "@/stores/thread-store";
 import { useThreadSettingsStore } from "@/stores/thread-settings-store";
 import { useThreads, threadVariant } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
+import { useThreadStatus } from "@/hooks/useThreadStatus";
 import { Markdown } from "@/components/chat/Markdown";
 import { AlertCircle, Ban, BookOpen, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Eye, FileText, Layers, ListTodo, Loader2, OctagonAlert, Pencil, RotateCw, Send, Sparkles, Square, Users, Wrench, XCircle, Zap, ZapOff } from "lucide-react";
 import { usePlanStore } from "@/stores/plan-store";
@@ -325,8 +326,53 @@ type ToolCall = { id?: string; name?: string; args?: Record<string, unknown> };
 type ToolStatus = "running" | "completed" | "failed" | "rejected";
 type ParsedResult = { raw: string; json: any | null; status: ToolStatus };
 
+function tryParsePartialJSON(s: string): any | null {
+  if (!s) return null;
+  try { return JSON.parse(s); } catch {}
+  let str = s;
+  let inStr = false;
+  let esc = false;
+  let openO = 0, openA = 0;
+  for (const c of str) {
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{") openO++;
+    else if (c === "}") openO--;
+    else if (c === "[") openA++;
+    else if (c === "]") openA--;
+  }
+  if (inStr) str += '"';
+  str = str.replace(/[,:]\s*$/, "");
+  while (openA-- > 0) str += "]";
+  while (openO-- > 0) str += "}";
+  try { return JSON.parse(str); } catch { return null; }
+}
+
 function getToolCalls(m: AnyMsg): ToolCall[] {
-  return ((m.tool_calls as any[]) || []) as ToolCall[];
+  const full = ((m.tool_calls as any[]) || []) as ToolCall[];
+  const chunks = ((m as any).tool_call_chunks as any[] | undefined) || [];
+  if (!chunks.length) return full;
+  // Merge: prefer fully-parsed `tool_calls` when args are non-empty;
+  // otherwise reconstruct a partial args object from the streaming chunks
+  // so the UI can render arguments as they arrive instead of waiting for
+  // the model to close the JSON blob.
+  const merged = new Map<string, ToolCall>();
+  full.forEach((tc, i) => merged.set(tc.id ?? `__i${i}`, { ...tc }));
+  chunks.forEach((ch: any, i: number) => {
+    const key = ch.id ?? `__i${ch.index ?? i}`;
+    const existing = merged.get(key) ?? {};
+    const existingArgs = (existing.args ?? {}) as Record<string, unknown>;
+    const hasFullArgs = existingArgs && Object.keys(existingArgs).length > 0;
+    const partial = hasFullArgs ? existingArgs : (tryParsePartialJSON(ch.args ?? "") ?? existingArgs);
+    merged.set(key, {
+      id: existing.id ?? ch.id,
+      name: existing.name ?? ch.name,
+      args: partial,
+    });
+  });
+  return Array.from(merged.values());
 }
 
 function getMessageError(m: AnyMsg): { message?: string; type?: string } | null {
@@ -340,7 +386,10 @@ function getMessageError(m: AnyMsg): { message?: string; type?: string } | null 
 // Classify the lifecycle of a tool call from its matching ToolMessage.
 function parseResult(raw: string | undefined, isLastAssistant: boolean, isStreaming: boolean): ParsedResult {
   if (raw === undefined) {
-    const status: ToolStatus = isLastAssistant && isStreaming ? "running" : "running";
+    // No matching ToolMessage yet. If this assistant message is the live tail
+    // of an in-flight run, the tool is still streaming its args / executing.
+    const status: ToolStatus = "running";
+    void isLastAssistant; void isStreaming;
     return { raw: "", json: null, status };
   }
   let json: any = null;
@@ -1102,7 +1151,7 @@ function AskUserCard({
   );
 }
 
-export function ChatPane() {
+function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
   const [threadIdParam, setThreadIdParam] = useQueryState("threadId");
   const activeFromStore = useThreadStore((s) => s.activeThreadId);
   const setActive = useThreadStore((s) => s.setActiveThread);
@@ -1182,12 +1231,25 @@ export function ChatPane() {
     variant: activeVariant,
   });
   const [input, setInput] = useState("");
+
+  // Server-side thread status. On page reload / network drop, `stream.isLoading`
+  // is false until the SSE rejoins and the first token arrives — but the run
+  // may still be executing on the server. Polling the thread status while we
+  // are NOT locally streaming lets the UI reflect real busy state immediately
+  // (disables Send, swaps to Stop, shows "Rejoining run…"). While we ARE
+  // streaming locally, polling is disabled to avoid redundant requests.
+  const localStreaming = stream.isLoading;
+  const { status: threadStatus, mutate: refreshThreadStatus } = useThreadStatus(
+    threadId,
+    localStreaming ? 0 : 4000,
+  );
+  const serverBusy = threadStatus === "busy";
+  const isStreaming = localStreaming || serverBusy;
   const store = useSyllabusStore();
   const plan = usePlanStore();
   const cancel = useCancelStream();
 
   const messages = (stream.messages ?? []) as AnyMsg[];
-  const isStreaming = stream.isLoading;
 
   // Deep variant uses deepagents' built-in `write_todos` tool which writes
   // into `state.todos` (not into `plan-store`). Mirror that array into the
@@ -1492,19 +1554,36 @@ export function ChatPane() {
       } else if (threadId) {
         const { getLangGraphClient } = await import("@/providers/client");
         const client = getLangGraphClient();
-        const runs = await client.threads.getState(threadId).catch(() => null);
-        void runs;
         try {
-          // @ts-ignore — cancelAll exists on recent SDKs
-          if (typeof client.runs.cancelAll === "function") {
+          // Cancel whatever run is currently marked busy on the server. This
+          // covers the "reloaded mid-run" case where the local SDK has no
+          // runId yet but the server-side thread is still executing.
+          if (typeof (client.runs as any).cancelAll === "function") {
             await (client.runs as any).cancelAll(threadId, true);
+          } else {
+            const active = await (client.threads as any).getRuns?.(threadId).catch(() => []);
+            if (Array.isArray(active)) {
+              await Promise.all(
+                active
+                  .filter((r: any) => r?.status === "running" || r?.status === "pending")
+                  .map((r: any) => client.runs.cancel(threadId, r.run_id, true).catch(() => null)),
+              );
+            }
           }
         } catch {}
       }
     } finally {
       sAny.stop?.();
+      void refreshThreadStatus();
     }
-  }, [stream, threadId, cancel]);
+  }, [stream, threadId, cancel, refreshThreadStatus]);
+
+  // Explicit reconnect: tears down the current <ChatPaneBody/> and mounts a
+  // fresh one via the parent epoch key, which re-creates the useStream hook
+  // so it can re-attach to any in-flight server run immediately.
+  const onReconnect = useCallback(() => {
+    bumpEpoch();
+  }, [bumpEpoch]);
 
   const onKey = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1546,6 +1625,11 @@ export function ChatPane() {
     });
   }, [threadId, autoAccept, toggleAutoAccept]);
 
+  // We distinguish three live states in the header pill:
+  //   - "streaming"    → SSE is attached and tokens are flowing locally
+  //   - "rejoining"    → server says busy but no local SSE yet (reload / net drop)
+  //   - idle           → nothing running
+  const isRejoining = serverBusy && !localStreaming;
   const header = useMemo(() => {
     return (
       <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2 text-xs">
@@ -1553,11 +1637,22 @@ export function ChatPane() {
           {threadId ? `Thread ${threadId.slice(0, 8)}` : "No thread"}
         </span>
         <span className="flex items-center gap-2">
-          {isStreaming && (
+          {localStreaming && (
             <span className="flex items-center gap-1 text-[var(--primary)]">
               <Loader2 className="h-3 w-3 animate-spin" />
               streaming…
             </span>
+          )}
+          {isRejoining && (
+            <button
+              type="button"
+              onClick={onReconnect}
+              title="Server says this run is still executing. Click to re-attach the live stream."
+              className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-500 hover:bg-amber-500/20 transition-colors"
+            >
+              <Loader2 className="h-3 w-3 animate-spin" />
+              rejoining… reconnect
+            </button>
           )}
           {!isStreaming && stopReason && <StopReasonChip reason={stopReason} />}
           <button
@@ -1583,7 +1678,7 @@ export function ChatPane() {
         </span>
       </div>
     );
-  }, [threadId, isStreaming, autoAccept, onToggleAutoAccept, stopReason]);
+  }, [threadId, isStreaming, localStreaming, isRejoining, onReconnect, autoAccept, onToggleAutoAccept, stopReason]);
 
   return (
     <div className="flex h-full flex-col bg-[var(--card)] text-[var(--foreground)] border-l border-[var(--border)]">
@@ -1604,6 +1699,12 @@ export function ChatPane() {
             {threadId ? "No messages yet. Say hi 👋" : "Start a new thread to chat with the syllabus agent."}
           </div>
         )}
+        {!isSwitchingThread && messages.length === 0 && isRejoining && (
+          <div className="flex items-center justify-center gap-2 py-6 text-xs text-amber-500">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Rejoining in-flight run… waiting for the next token.
+          </div>
+        )}
         {messages.map((m, i) => {
           const role = m.type ?? m.role;
           const isAssistant = role !== "human" && role !== "user" && role !== "tool";
@@ -1621,6 +1722,41 @@ export function ChatPane() {
             />
           );
         })}
+        {(() => {
+          // "Thinking…" placeholder while the agent has been invoked but
+          // hasn\'t emitted the first assistant token (no content and no
+          // tool_call_chunks yet). Without this the chat looks dead between
+          // user-send and the first SSE chunk — which is noticeable on slow
+          // networks and during tool_call arg streaming warm-up.
+          if (!isStreaming) return null;
+          const last = messages[messages.length - 1];
+          if (!last) return (
+            <div className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Thinking…
+            </div>
+          );
+          const role = (last as any).type ?? (last as any).role;
+          if (role === "human" || role === "user" || role === "tool") {
+            return (
+              <div className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {role === "tool" ? "Reading tool result…" : "Thinking…"}
+              </div>
+            );
+          }
+          const hasText = !!messageText(last as any);
+          const hasCalls = getToolCalls(last as any).length > 0;
+          if (!hasText && !hasCalls) {
+            return (
+              <div className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Thinking…
+              </div>
+            );
+          }
+          return null;
+        })()}
         {interruptValue && interruptValue.name === "askUser" && (
           <AskUserCard call={interruptValue} busy={resumeBusy} onSubmit={onSubmitAskUser} onReject={onReject} />
         )}
@@ -1652,7 +1788,8 @@ export function ChatPane() {
           <button
             onClick={onSend}
             className="rounded-md bg-[var(--primary)] text-[var(--primary-foreground)] px-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-            disabled={!input.trim()}
+            disabled={!input.trim() || isStreaming}
+            title={isStreaming ? "Agent is working on this thread — wait for it to finish or click Stop." : undefined}
           >
             <Send className="h-4 w-4" />
           </button>
@@ -1730,6 +1867,38 @@ function ErrorBubble({ error, onRetry }: { error: unknown; onRetry: () => void }
       </div>
     </div>
   );
+}
+
+
+
+export function ChatPane() {
+  // Reconnect epoch: bumping this key unmounts <ChatPaneBody/> and remounts a
+  // fresh one, which re-creates the langgraph useStream hook. That is the
+  // cheapest way to re-attach to an in-flight server run after a network drop
+  // or a stale local SSE without forcing a full page reload (which would also
+  // re-download the thread history).
+  const [epoch, setEpoch] = React.useState(0);
+  const bumpEpoch = React.useCallback(() => setEpoch((n) => n + 1), []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onOnline = () => {
+      // Browser just regained connectivity. Force a clean reconnect so any
+      // silent SSE drop that happened while offline gets healed.
+      bumpEpoch();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") bumpEpoch();
+    };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [bumpEpoch]);
+
+  return <ChatPaneBody key={epoch} bumpEpoch={bumpEpoch} />;
 }
 
 function StopReasonChip({ reason }: { reason: string }) {

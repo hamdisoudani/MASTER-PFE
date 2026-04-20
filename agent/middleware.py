@@ -268,7 +268,7 @@ def compact_tool_history(messages: list[BaseMessage]) -> list[BaseMessage]:
     return out
 
 
-def compact_history(messages: list[BaseMessage], token_budget: int = 12000) -> list[BaseMessage]:
+def compact_history(messages: list[BaseMessage], token_budget: int = 128000) -> list[BaseMessage]:
     """If the conversation is over budget, summarize the earliest safe window.
 
     Safe = does not break any tool_call ↔ ToolMessage bond.

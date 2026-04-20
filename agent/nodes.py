@@ -42,7 +42,7 @@ from agent.tools import PYTHON_TOOLS, PYTHON_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
 
-CONTEXT_TOKEN_BUDGET = int(os.getenv("AGENT_CONTEXT_TOKEN_BUDGET", "12000"))
+CONTEXT_TOKEN_BUDGET = int(os.getenv("AGENT_CONTEXT_TOKEN_BUDGET", "128000"))
 
 LESSON_MUTATION_TOOLS = {
     "addLesson",
