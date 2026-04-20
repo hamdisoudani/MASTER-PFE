@@ -28,3 +28,4 @@ agent/.venv/
 .langgraph_api/
 .venv/
 agent/__pycache__/
+.e2b_sandbox_id

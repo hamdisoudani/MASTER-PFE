@@ -224,11 +224,14 @@ def _elide_tool_result(tm: ToolMessage, name_hint: str | None) -> ToolMessage:
     if len(content) <= MAX_TOOL_RESULT_CHARS:
         return tm
     head = content[:MAX_ELIDED_TOOL_RESULT_CHARS]
-    return ToolMessage(
+    new = ToolMessage(
         content=head + f"\n…[elided {len(content) - len(head)} chars from {name_hint or 'tool result'}]",
         tool_call_id=tm.tool_call_id,
         status=getattr(tm, "status", None),
     )
+    if getattr(tm, "id", None):
+        new.id = tm.id
+    return new
 
 
 def compact_tool_history(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -362,3 +365,72 @@ def estimate_context_usage(messages: Iterable[BaseMessage], budget: int) -> dict
     tok = _approx_tokens(messages)
     frac = 0.0 if budget <= 0 else min(1.0, tok / float(budget))
     return {"tokens": int(tok), "budget": int(budget), "fraction": round(frac, 4)}
+
+
+def gc_persistent_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Persistent garbage-collector pass for checkpoint storage.
+
+    Rewrites heavy tool_call args on AIMessages and bulky ToolMessage
+    content for messages OUTSIDE the most-recent-turn window, and returns
+    them as REPLACEMENT messages (with the ORIGINAL message ``id``s)
+    suitable for being merged by the ``add_messages`` reducer.
+
+    Unlike :func:`compact_history` / :func:`compact_tool_history` which
+    operate in-memory just before the LLM call, this function is meant to
+    be included in a node's state update so the elided versions are what
+    gets persisted to the checkpointer. That shrinks the stored thread
+    dramatically (lesson blocks and scraped markdown are the two worst
+    offenders) without changing what the agent sees on the next turn
+    beyond what compaction was already doing.
+
+    Behavior (per tool class):
+    - ``ELIDABLE_MUTATION_TOOLS`` (addLesson / updateLessonContent /
+      appendLessonContent / patchLessonBlocks): replace the ``content`` /
+      ``blocks`` array on the resolved tool_call args with a single stub
+      ``[{"__elided__": True, "blockCount": N}]``. The agent does not need
+      to re-read blocks it already authored — ``lesson_blocks_cache`` and
+      ``last_authored_lesson`` carry the authoritative copy forward.
+    - ``ELIDABLE_READ_TOOLS`` (scrape_page / web_search / getSyllabusOutline /
+      readLessonBlocks) and unknown tools: truncate ToolMessage content to
+      ``MAX_ELIDED_TOOL_RESULT_CHARS``. For ``scrape_page`` the trimmed
+      markdown is additionally mirrored into ``research_cache`` by
+      ``nodes._cache_scrape_result``, so downstream writers stay grounded.
+
+    Preserves tool_call ↔ ToolMessage bonds: we never touch the recent
+    window, and rewrites preserve both ``tool_call_id`` and the message
+    ``id`` so the reducer replaces in place rather than duplicating.
+
+    Returns an empty list when nothing needs rewriting, which lets callers
+    cheaply include it in their state update unconditionally.
+    """
+    if not messages:
+        return []
+    boundaries = _boundary_indices(messages)
+    if len(boundaries) <= KEEP_RECENT_TURNS:
+        return []
+    recent_start = boundaries[-KEEP_RECENT_TURNS]
+
+    updates: list[BaseMessage] = []
+    tool_name_by_id: dict[str, str] = {}
+    for i, m in enumerate(messages):
+        if isinstance(m, AIMessage):
+            for tc in (getattr(m, "tool_calls", None) or []):
+                if tc.get("id") and tc.get("name"):
+                    tool_name_by_id[tc["id"]] = tc["name"]
+        if i >= recent_start:
+            continue
+        mid = getattr(m, "id", None)
+        if not mid:
+            continue
+        if isinstance(m, AIMessage):
+            new = _elide_tool_args(m)
+            if new is not m:
+                updates.append(new)
+        elif isinstance(m, ToolMessage):
+            hint = tool_name_by_id.get(getattr(m, "tool_call_id", ""))
+            if hint in ELIDABLE_READ_TOOLS or hint is None:
+                new = _elide_tool_result(m, hint)
+                if new is not m:
+                    updates.append(new)
+    return updates
+
