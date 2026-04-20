@@ -27,11 +27,13 @@ export function useSyllabusAgent({ threadId, onThreadId, variant }: StreamOpts =
     messagesKey: "messages" as const,
     reconnectOnMount: true,
     fetchStateHistory: true,
-    // Stream messages from deepagents subagent subgraphs so the user sees
-    // researcher / writer / reviser work live. Subagent messages are NOT
-    // persisted into parent state (deepagents default), so they naturally
-    // disappear from the thread once the run ends.
-    streamSubgraphs: true,
+    // NOTE: `streamSubgraphs` is NOT a constructor option in
+    // @langchain/langgraph-sdk — it is only read from per-run
+    // `submit()` options. ChatPane passes it on every submit so
+    // deepagents subagent (researcher / writer / reviser) messages
+    // stream to the client in real time. Subagent messages are not
+    // persisted into parent state (deepagents default), so they
+    // disappear once the run ends.
     defaultHeaders: langgraphHeaders(),
     onThreadId,
   };
