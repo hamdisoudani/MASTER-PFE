@@ -290,7 +290,7 @@ def compact_history(messages: list[BaseMessage], token_budget: int = 12000) -> l
         return messages
 
     summary = _summarize_slice(older)
-    compacted: list[BaseMessage] = [HumanMessage(content="[compact-summary] " + summary)] + recent
+    compacted: list[BaseMessage] = [HumanMessage(content="[compact-summary] " + summary, additional_kwargs={"internal": True, "kind": "compact-summary"})] + recent
     logger.info(
         "compact_history: compressed %d→%d messages (≈%d→%d tokens)",
         len(messages), len(compacted), _approx_tokens(messages), _approx_tokens(compacted),
@@ -351,7 +351,7 @@ def normalize_system_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     for m in messages:
         if isinstance(m, SystemMessage):
             text = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
-            out.append(HumanMessage(content="[system-note] " + text))
+            out.append(HumanMessage(content="[system-note] " + text, additional_kwargs={"internal": True, "kind": "system-note"}))
         else:
             out.append(m)
     return out

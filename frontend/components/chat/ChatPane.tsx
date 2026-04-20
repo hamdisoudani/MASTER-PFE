@@ -1258,8 +1258,24 @@ export function ChatPane() {
     const hidden = new Set<string>();
     type ActiveTask = { id: string; subagent: string };
     const active: ActiveTask[] = [];
+    const isInternal = (msg: AnyMsg): boolean => {
+      const ak = (msg as any).additional_kwargs as Record<string, unknown> | undefined;
+      if (ak && (ak.internal === true || typeof ak.kind === "string" && /^(compact-summary|system-note)$/i.test(ak.kind as string))) {
+        return true;
+      }
+      const content = (msg as any).content;
+      if (typeof content === "string") {
+        const t = content.trimStart();
+        if (t.startsWith("[compact-summary]") || t.startsWith("[system-note]")) return true;
+      }
+      return false;
+    };
     messages.forEach((m, i) => {
       const role = m.type ?? m.role;
+      if (isInternal(m)) {
+        hidden.add((m.id as string) ?? `__idx:${i}`);
+        return;
+      }
       if (role === "tool") {
         const tcid = (m as any).tool_call_id as string | undefined;
         if (tcid) {

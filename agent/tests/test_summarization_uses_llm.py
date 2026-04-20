@@ -96,3 +96,31 @@ def test_deep_graph_summarizer_holds_real_llm(monkeypatch):
     assert isinstance(mw_instance, SummarizationMiddleware)
     assert getattr(mw_instance, "model", None) is not None, "SummarizationMiddleware has no bound model"
     assert hasattr(mw_instance.model, "invoke"), "bound model must be an invokable chat model"
+
+
+
+def test_compacted_summary_is_tagged_internal_for_ui(monkeypatch):
+    """The summary HumanMessage must carry additional_kwargs.internal=True so
+    the frontend can filter it out (otherwise it renders as a user bubble).
+    """
+    _RecorderLLM.calls = []
+    fake = _RecorderLLM(responses=["### User intent\nx\n### Lessons & artifacts produced so far\ny\n### Tools used and key results\nz\n### Open issues / pending todos\nq\n### Decisions & constraints to preserve\nr"])
+    monkeypatch.setattr("agent.llm.get_llm", lambda: fake, raising=True)
+    msgs = _build_overflow_history(20)
+    out = mw.compact_history(msgs, token_budget=2000)
+    first = out[0]
+    assert isinstance(first, HumanMessage)
+    ak = getattr(first, "additional_kwargs", {}) or {}
+    assert ak.get("internal") is True, "compact summary must be tagged internal"
+    assert ak.get("kind") == "compact-summary"
+
+
+def test_normalize_system_messages_tags_internal():
+    from langchain_core.messages import SystemMessage
+    msgs = [SystemMessage(content="QUALITY REVIEW FAILED: fix lesson-1"), HumanMessage(content="ok")]
+    out = mw.normalize_system_messages(msgs)
+    note = out[0]
+    assert isinstance(note, HumanMessage)
+    ak = getattr(note, "additional_kwargs", {}) or {}
+    assert ak.get("internal") is True
+    assert ak.get("kind") == "system-note"
