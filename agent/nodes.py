@@ -240,10 +240,11 @@ async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[
                 blocks = args.get("blocks")
             else:
                 blocks = args.get("content")
+            blocks_list = blocks if isinstance(blocks, list) else []
             last_lesson = {
                 "lesson_id": lesson_id,
                 "tool": tc["name"],
-                "blocks": blocks if isinstance(blocks, list) else [],
+                "blocks": blocks_list,
                 "title": args.get("title"),
             }
 
@@ -284,17 +285,36 @@ async def critic_node(state: AgentState, config: RunnableConfig) -> dict[str, An
     if lesson.get("tool") == "patchLessonBlocks":
         return {"last_authored_lesson": None}
 
-    blocks = lesson.get("blocks") or []
-    report = evaluate_lesson(blocks)
     lesson_id = str(lesson.get("lesson_id") or "unknown")
+    tool_name = lesson.get("tool")
+    batch_blocks = lesson.get("blocks") or []
+
+    # Aggregate blocks across addLesson + appendLessonContent batches. The
+    # supervisor/writer authors lessons in 2-3 batches per the BATCH_WRITING
+    # policy, so we only evaluate the full lesson on the latest append for
+    # a given lessonId — earlier batches cache their blocks and skip.
+    cache = dict(state.get("lesson_blocks_cache") or {})
+    if tool_name == "addLesson":
+        cache[lesson_id] = list(batch_blocks)
+        aggregated = cache[lesson_id]
+    elif tool_name == "appendLessonContent":
+        aggregated = list(cache.get(lesson_id) or []) + list(batch_blocks)
+        cache[lesson_id] = aggregated
+    else:  # updateLessonContent is a full overwrite
+        cache[lesson_id] = list(batch_blocks)
+        aggregated = cache[lesson_id]
+
+    report = evaluate_lesson(aggregated)
 
     attempts = dict(state.get("revision_attempts") or {})
     reports = dict(state.get("critic_reports") or {})
-    reports[lesson_id] = {**report, "tool": lesson.get("tool"), "title": lesson.get("title")}
+    reports[lesson_id] = {**report, "tool": tool_name, "title": lesson.get("title"),
+                          "block_count": len(aggregated)}
 
     out: dict[str, Any] = {
         "critic_reports": reports,
         "last_authored_lesson": None,
+        "lesson_blocks_cache": cache,
     }
 
     if report.get("pass"):

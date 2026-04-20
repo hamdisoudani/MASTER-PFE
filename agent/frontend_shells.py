@@ -119,6 +119,30 @@ setPlan = _make_shell(
     "setPlan",
     "Publish a multi-step plan to the UI. Args: items (list of {id,title,status}).",
 )
+
+
+askUser = _make_shell(
+    "askUser",
+    "Ask the end user one or more structured questions BEFORE doing work that "
+    "needs their input (topic, audience, language, grade, tone, length, etc.). "
+    "The frontend renders each question as an interactive card: the user can "
+    "pick one of the choices you provide, pick multiple if `multi` is true, or "
+    "type their own answer when `allow_custom` is true. This is ALWAYS "
+    "preferred over asking in plain chat — it guarantees every question gets "
+    "an answer and dramatically reduces user typing.\n"
+    "Args: questions (list of objects), each {\n"
+    "  id: str (stable key, e.g. 'audience'),\n"
+    "  prompt: str (the question to show),\n"
+    "  choices: list[str] (2-6 suggested answers; optional if allow_custom),\n"
+    "  allow_custom: bool (default true — let the user type a free answer),\n"
+    "  multi: bool (default false — allow picking several choices),\n"
+    "  placeholder: str (optional hint for the free-text input)\n"
+    "}.\n"
+    "Returns: {answers: {<id>: <string | list[string]>}}. Use those answers "
+    "verbatim for the rest of the job. Do NOT call askUser again for the same "
+    "ids unless the user asked to change them.",
+)
+
 updatePlanItem = _make_shell(
     "updatePlanItem",
     "Update a single plan item's status. Args: id (str), status (str).",
@@ -126,6 +150,7 @@ updatePlanItem = _make_shell(
 
 
 FRONTEND_SHELL_TOOLS = [
+    askUser,
     addLesson,
     updateLessonContent,
     appendLessonContent,

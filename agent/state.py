@@ -26,3 +26,6 @@ class AgentState(TypedDict, total=False):
     critic_reports: Optional[dict[str, dict[str, Any]]]
     revision_attempts: Optional[dict[str, int]]
     last_authored_lesson: Optional[dict[str, Any]]
+    # Per-lessonId accumulator of blocks across addLesson + appendLessonContent
+    # batches, so the critic evaluates the aggregate lesson, not each batch.
+    lesson_blocks_cache: Optional[dict[str, list[dict[str, Any]]]]

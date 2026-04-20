@@ -152,6 +152,68 @@ def _render_editor_context(ed: dict[str, Any] | None) -> str:
 
 
 
+
+
+INTERACTIVE_QUESTIONS = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INTERACTIVE QUESTIONS (askUser) — PREFERRED OVER CHAT FOR GATHERING INPUT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When the user's request is missing any detail you need (title, subject,
+audience/grade, language, tone, number of lessons, must-cover topics, …),
+DO NOT ask in plain chat. Call the frontend tool `askUser` with all
+missing fields batched in ONE call. The UI renders each question as a
+card with clickable choice chips plus an optional free-text fallback,
+so the user answers in seconds without typing.
+
+Schema per question:
+  { "id": str,
+    "prompt": str,
+    "choices": [str, ...]          # 2-6 short suggestions
+    "allow_custom": bool,           # default true — let them type their own
+    "multi": bool,                  # default false — allow several picks
+    "placeholder": str              # optional hint for the free-text input
+  }
+
+Return shape: { "answers": { "<id>": "<picked or typed answer>", ... } }
+
+Rules:
+  1. Prefer askUser over any chat question. Short chat sentences may
+     only PRECEDE the askUser call ("Quick questions so I tailor this:").
+  2. Batch all open questions in one askUser call. No multi-round ping
+     pong.
+  3. Always offer 2-5 realistic choices, plus allow_custom=true unless
+     the set is strictly enumerated.
+  4. Never re-ask an already-answered id. Quote the answers back in
+     your plan / todos / lesson specs verbatim.
+  5. After the answers come back, proceed with the real work
+     (setPlan → write/patch lessons). Do NOT just echo them."""
+
+
+
+BATCH_WRITING = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BATCHED LESSON AUTHORING (do NOT dump the entire lesson in one call)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A single huge addLesson / updateLessonContent call is slow, truncates
+in the UI, and pressures the token budget. For every NEW lesson, write
+it in 2-3 sequential batches against the SAME lessonId:
+
+  Batch 1 - addLesson:            H1 title + hook + H2 "Learning
+                                  Objectives" + H2 "Lesson" section.
+                                  (8-12 blocks)
+  Batch 2 - appendLessonContent:  H2 "Worked Example" + H2 "Practice"
+                                  (with answers).                (7-12 blocks)
+  Batch 3 - appendLessonContent:  H2 "Summary" + H2 "Sources".     (4-6 blocks)
+
+The deterministic critic AGGREGATES blocks per lessonId across batches
+and runs the full rubric only on the aggregate. So you are free to stop
+before the skeleton is complete in any single call, as long as the FINAL
+total (after your last appendLessonContent) contains:
+  - >= 18 blocks
+  - every required H2 section
+  - >= 5 practice items
+  - no forbidden tokens (..., etc., and so on, TODO)
+Use the exact lessonId returned by the first addLesson for every follow
+up append call. Never restart the lesson in a fresh addLesson mid-way."""
+
 CRITIC_GATE = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTOMATED QUALITY GATE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -179,6 +241,8 @@ def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, An
         TOOL_JSON_RULES,
         PYTHON_TOOLS_DOC,
         _render_frontend_tool_docs(defs),
+        INTERACTIVE_QUESTIONS,
+        BATCH_WRITING,
         CRITIC_GATE,
         LOOP,
         _render_editor_context(state.get("editor_context")),

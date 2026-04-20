@@ -114,6 +114,33 @@ const BLOCK_SCHEMA = {
 
 const FRONTEND_TOOLS = [
   {
+    name: "askUser",
+    description: "Ask the end user one or more structured questions with clickable choices. The UI renders each question as a card with choice chips plus an optional free-text fallback. Use this whenever you need input (title, audience, language, tone, lesson count, …) instead of asking in chat. Batch related questions in ONE call. Returns {answers: {<id>: <picked or typed string or array of strings>}}.",
+    strict: false,
+    parameters: {
+      type: "object",
+      required: ["questions"],
+      properties: {
+        questions: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            required: ["id", "prompt"],
+            properties: {
+              id: { type: "string" },
+              prompt: { type: "string" },
+              choices: { type: "array", items: { type: "string" } },
+              allow_custom: { type: "boolean" },
+              multi: { type: "boolean" },
+              placeholder: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+  },
+    {
     name: "createSyllabus",
     description: "Create a new syllabus with an id, title, subject, and optional description. Use this only when starting a brand new course plan.",
     strict: true,
@@ -360,6 +387,7 @@ const TOOL_META: Record<string, { label: string; icon: any; tone: string }> = {
   setPlan:             { label: "Plan",                 icon: ListTodo,  tone: "text-[var(--primary)]" },
   updatePlanItem:      { label: "Update plan item",     icon: ListTodo,  tone: "text-[var(--primary)]" },
   task:                { label: "Dispatch subagent",    icon: Users,     tone: "text-fuchsia-400" },
+  askUser:             { label: "Ask user",              icon: Wrench,    tone: "text-[var(--primary)]" },
 };
 
 function subagentIcon(name: string | null | undefined) {
@@ -941,6 +969,139 @@ function InterruptCard({
   );
 }
 
+
+
+type AskUserQuestion = {
+  id: string;
+  prompt: string;
+  choices?: string[];
+  allow_custom?: boolean;
+  multi?: boolean;
+  placeholder?: string;
+};
+
+function AskUserCard({
+  call,
+  busy,
+  onSubmit,
+  onReject,
+}: {
+  call: FrontendToolCall;
+  busy: boolean;
+  onSubmit: (answers: Record<string, string | string[]>) => void;
+  onReject: () => void;
+}) {
+  const questions = ((call.args as any)?.questions ?? []) as AskUserQuestion[];
+  const [picks, setPicks] = useState<Record<string, string[]>>({});
+  const [customs, setCustoms] = useState<Record<string, string>>({});
+
+  const setPick = (q: AskUserQuestion, choice: string) => {
+    setPicks((p) => {
+      const cur = p[q.id] ?? [];
+      if (q.multi) {
+        const next = cur.includes(choice) ? cur.filter((x) => x !== choice) : [...cur, choice];
+        return { ...p, [q.id]: next };
+      }
+      return { ...p, [q.id]: [choice] };
+    });
+    setCustoms((cs) => ({ ...cs, [q.id]: "" }));
+  };
+  const setCustom = (q: AskUserQuestion, text: string) => {
+    setCustoms((cs) => ({ ...cs, [q.id]: text }));
+    if (text) setPicks((p) => ({ ...p, [q.id]: [] }));
+  };
+
+  const allAnswered = questions.every((q) => {
+    const pk = picks[q.id] ?? [];
+    const ct = (customs[q.id] ?? "").trim();
+    return pk.length > 0 || ct.length > 0;
+  });
+
+  const submit = () => {
+    const out: Record<string, string | string[]> = {};
+    for (const q of questions) {
+      const pk = picks[q.id] ?? [];
+      const ct = (customs[q.id] ?? "").trim();
+      if (ct) out[q.id] = ct;
+      else if (q.multi) out[q.id] = pk;
+      else out[q.id] = pk[0] ?? "";
+    }
+    onSubmit(out);
+  };
+
+  return (
+    <div className="mx-3 my-2 rounded-md border border-[var(--primary)]/50 bg-[var(--primary)]/5 px-3 py-3 text-sm">
+      <div className="flex items-center gap-2 mb-3">
+        <Wrench className="h-4 w-4 text-[var(--primary)]" />
+        <span className="font-medium">The agent has a few quick questions</span>
+      </div>
+      <div className="space-y-4">
+        {questions.map((q) => {
+          const pk = picks[q.id] ?? [];
+          const ct = customs[q.id] ?? "";
+          return (
+            <div key={q.id} className="space-y-1.5">
+              <div className="text-[13px] font-medium text-[var(--foreground)]">{q.prompt}</div>
+              {Array.isArray(q.choices) && q.choices.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {q.choices.map((ch) => {
+                    const active = pk.includes(ch);
+                    return (
+                      <button
+                        type="button"
+                        key={ch}
+                        onClick={() => setPick(q, ch)}
+                        disabled={busy}
+                        className={
+                          "px-2.5 py-1 text-xs rounded-full border transition-colors " +
+                          (active
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)] border-[var(--primary)]"
+                            : "border-[var(--border)] hover:bg-[var(--muted)]")
+                        }
+                      >
+                        {ch}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {(q.allow_custom ?? true) && (
+                <input
+                  type="text"
+                  value={ct}
+                  onChange={(e) => setCustom(q, e.target.value)}
+                  disabled={busy}
+                  placeholder={q.placeholder ?? "Or type your own answer…"}
+                  className="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs outline-none focus:border-[var(--ring)]"
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-2 justify-end mt-3">
+        <button
+          type="button"
+          onClick={onReject}
+          disabled={busy}
+          className="px-3 py-1 text-xs rounded border border-[var(--border)] hover:bg-[var(--muted)] disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy || !allAnswered}
+          className="px-3 py-1 text-xs rounded bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50 inline-flex items-center gap-1"
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+          Submit answers
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ChatPane() {
   const [threadIdParam, setThreadIdParam] = useQueryState("threadId");
   const activeFromStore = useThreadStore((s) => s.activeThreadId);
@@ -1217,6 +1378,7 @@ export function ChatPane() {
           }))
         ),
       updatePlanItem: () => plan.updatePlanItem(a.id, a.status),
+      askUser: () => ({ answers: {} }),
     };
     let result: any;
     try {
@@ -1241,15 +1403,29 @@ export function ChatPane() {
     resumeWith({ ok: false, error: "user_rejected", message: "User rejected this tool call." });
   }, [interruptValue, resumeWith]);
 
+
+  const onSubmitAskUser = useCallback(
+    (answers: Record<string, string | string[]>) => {
+      if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
+      if (handledIdsRef.current.has(interruptValue.tool_call_id)) return;
+      handledIdsRef.current.add(interruptValue.tool_call_id);
+      resumeWith({ ok: true, result: { answers } });
+    },
+    [interruptValue, resumeWith]
+  );
+
   // Read-only tools (outline/read-blocks) never need explicit approval — they
   // only query the editor state. Everything else respects the per-thread
   // auto-accept toggle.
   const READ_ONLY_TOOL_NAMES = new Set(["getSyllabusOutline", "readLessonBlocks"]);
+  const INTERACTIVE_TOOL_NAMES = new Set(["askUser"]);
   useEffect(() => {
     if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
     if (handledIdsRef.current.has(interruptValue.tool_call_id)) return;
     if (resumeBusy) return;
     const isReadOnly = READ_ONLY_TOOL_NAMES.has(interruptValue.name);
+    const isInteractive = INTERACTIVE_TOOL_NAMES.has(interruptValue.name);
+    if (isInteractive) return;
     if (!isReadOnly && !autoAccept) return;
     void onApprove();
   }, [autoAccept, interruptValue, resumeBusy, onApprove]);
@@ -1429,7 +1605,10 @@ export function ChatPane() {
             />
           );
         })}
-        {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks"]).has(interruptValue.name) && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
+        {interruptValue && interruptValue.name === "askUser" && (
+          <AskUserCard call={interruptValue} busy={resumeBusy} onSubmit={onSubmitAskUser} onReject={onReject} />
+        )}
+        {interruptValue && !new Set(["getSyllabusOutline", "readLessonBlocks", "askUser"]).has(interruptValue.name) && <InterruptCard call={interruptValue} busy={resumeBusy} onApprove={onApprove} onReject={onReject} />}
         {streamError && !isStreaming && (
           <ErrorBubble error={streamError} onRetry={onRetry} />
         )}

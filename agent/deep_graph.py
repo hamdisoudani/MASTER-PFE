@@ -35,9 +35,10 @@ from deepagents.middleware.subagents import SubAgent
 from agent.checkpointer import get_checkpointer
 from agent.frontend_shells import (
     addLesson,
-    updateLessonContent,
     appendLessonContent,
+    askUser,
     patchLessonBlocks,
+    updateLessonContent,
 )
 from agent.llm import get_llm
 from agent.tools import web_search, scrape_page
@@ -60,6 +61,43 @@ You operate BlockNote lessons for real learners (often children/students).
                     supervisor). Just keep write_todos up to date.
 - task            - delegate to a subagent (researcher, writer, reviser).
                     This is how real work gets done.
+- askUser         - ALWAYS use this tool to collect information from the
+                    user instead of asking in chat. Frontend renders each
+                    question as an interactive card with clickable choices
+                    + an optional free-text fallback. Batch related
+                    questions in ONE call (pass a list). Typical uses:
+                    syllabus title, subject, target audience / grade,
+                    language, tone, number of chapters, pedagogical
+                    approach, must-cover topics. Prefer 2-5 short
+                    suggestions per question and set allow_custom=true
+                    unless the set is strictly enumerated.
+
+## Info-gathering policy (MANDATORY when the user's first message is vague)
+If the initial request is missing any of: syllabus title, subject,
+audience (grade/level), language, tone, number of chapters/lessons - do
+NOT start write_todos yet. Call askUser ONCE with all missing fields
+batched. Good example:
+
+    askUser(questions=[
+      {"id":"title","prompt":"What should the syllabus be called?",
+       "choices":["Intro to Fractions","Fractions for Grade 5",
+                  "Everyday Fractions"],"allow_custom":true,
+       "placeholder":"e.g. 'Fractions: adding with unlike denominators'"},
+      {"id":"audience","prompt":"Who is this for?",
+       "choices":["Grade 3","Grade 5","Grade 7","Undergraduate"],
+       "allow_custom":true},
+      {"id":"language","prompt":"Language?",
+       "choices":["English","French","Arabic","Spanish"],
+       "allow_custom":true},
+      {"id":"tone","prompt":"Tone?",
+       "choices":["Playful and visual","Formal textbook",
+                  "Conversational","Exam-prep"], "allow_custom":true},
+      {"id":"lesson_count","prompt":"How many lessons?",
+       "choices":["3","5","8","12"], "allow_custom":true},
+    ])
+
+After the answers come back, write_todos using those answers verbatim
+and delegate to subagents. Never re-ask an answered id.
 
 ## Subagents (each starts BLIND - no chat history, no memory of prior turns)
 - researcher  tools: web_search, scrape_page
@@ -155,31 +193,52 @@ WRITER_PROMPT = """You are the WRITER subagent of MASTER-PFE.
 You start with a SINGLE message from the supervisor containing the full
 lesson spec AND the research notes verbatim. That is your entire input.
 
-Tools: addLesson, updateLessonContent, appendLessonContent.
+Tools: addLesson, appendLessonContent, updateLessonContent.
 
-Canonical H2 skeleton (REQUIRED in this order)
+Canonical H2 skeleton (REQUIRED in this order, total >= 18 blocks)
   1. Learning Objectives    (3-5 bullets)
   2. Lesson                 (explanation with subheadings + examples)
   3. Worked Example         (one fully solved example, step by step)
-  4. Practice               (3-6 exercises WITH answers)
+  4. Practice               (>=5 exercises WITH answers)
   5. Summary                (bullet recap)
   6. Sources                (real URLs pulled from the research notes)
 
+*** BATCHED AUTHORING (write in stages, never one giant payload) ***
+A single huge tool call is slow, truncates in the UI, and stresses the
+token limits. Write lessons in 2-3 sequential batches against the SAME
+lessonId:
+
+  Batch 1 (addLesson): H1 title + hook paragraph + sections 1-2
+          (Learning Objectives + Lesson). Usually 8-12 blocks.
+  Batch 2 (appendLessonContent, same lessonId): sections 3-4
+          (Worked Example + Practice + Answers). Usually 7-12 blocks.
+  Batch 3 (appendLessonContent, same lessonId): sections 5-6
+          (Summary + Sources). Usually 4-6 blocks.
+
+The critic aggregates blocks across batches per lessonId, so the full
+skeleton is only evaluated once you finish the LAST batch. Make sure
+the FINAL total is >= 18 blocks and contains every required H2.
+
 Hard rules
-- Minimum 18 BlockNote blocks total.
+- Total >= 18 BlockNote blocks across all batches for the same lesson.
 - Vary block types: headings, paragraphs, bulleted lists, numbered
   lists, at least one worked example block.
 - List every item in a sequence - never "..." or "etc.".
 - Write the lesson directly; never add meta-commentary like "Here is
   the lesson".
 - Cite only URLs that actually appear in the research notes.
+- Each appendLessonContent MUST reuse the exact lessonId returned by
+  addLesson's tool result.
 
 Action
-- If the spec says "new lesson", call addLesson(chapterId, title, content).
-- If the spec says "replace lesson <id>", call updateLessonContent.
-- If the spec says "extend lesson <id>", call appendLessonContent.
-Make exactly ONE mutation call. After it returns, reply with a one-line
-confirmation and stop."""
+- "new lesson": addLesson once, then 1-2 appendLessonContent calls
+  (same lessonId) to complete the skeleton.
+- "replace lesson <id>": updateLessonContent once with the full content
+  (batching does not apply to a clean overwrite).
+- "extend lesson <id>": appendLessonContent once with the new blocks.
+
+After the FINAL batch returns, reply with a one-line confirmation and
+stop. Do not restate the lesson."""
 
 
 REVISER_PROMPT = """You are the REVISER subagent of MASTER-PFE.
@@ -238,11 +297,12 @@ SUBAGENTS: list[SubAgent] = [
 ]
 
 
-SUPERVISOR_TOOLS: list = []
+SUPERVISOR_TOOLS: list = [askUser]
 """Supervisor has NO web tools and NO lesson mutations on purpose -
 those are locked inside the researcher / writer / reviser subagents.
-write_todos and task are injected automatically by deepagents, so the
-supervisor starts with an empty custom tool list."""
+Supervisor DOES own askUser so it can gather structured answers from
+the end user before planning. write_todos and task are injected
+automatically by deepagents."""
 
 
 def build_graph():
