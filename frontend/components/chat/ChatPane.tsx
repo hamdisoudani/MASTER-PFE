@@ -941,6 +941,7 @@ export function ChatPane() {
         (stream as any).submit(undefined, {
           command: { resume: result },
           config: { configurable: { frontend_tools: FRONTEND_TOOLS } },
+          streamSubgraphs: true,
         });
       } catch (e) {
         console.error("resume failed", e);
@@ -1022,7 +1023,10 @@ export function ChatPane() {
       stickyRef.current = true;
       stream.submit(
         { messages: [{ role: "user", content: text }] },
-        { config: { configurable: { frontend_tools: FRONTEND_TOOLS } } } as any
+        {
+          config: { configurable: { frontend_tools: FRONTEND_TOOLS } },
+          streamSubgraphs: true,
+        } as any
       );
     },
     [stream]
