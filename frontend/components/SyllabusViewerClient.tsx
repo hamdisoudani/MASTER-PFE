@@ -1,12 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { FolderTree, ListTree, MessageSquare, NotebookPen } from "lucide-react";
+import { FolderTree, MessageSquare, NotebookPen, ListTree } from "lucide-react";
 import { useSyllabusStore } from "@/store/syllabusStore";
 import { FileTree } from "@/components/FileTree";
 import { BlockNoteEditor, EmptyEditorState } from "@/components/BlockNoteEditor";
 import { ChatPane } from "@/components/chat/ChatPane";
 import { ThreadHistory } from "@/components/chat/ThreadHistory";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/layout/AppSidebar";
+import { SiteHeader } from "@/components/layout/SiteHeader";
 
 type MobileTab = "threads" | "files" | "editor" | "chat";
 
@@ -43,15 +46,27 @@ export default function SyllabusViewerClient() {
 
   if (isDesktop) {
     return (
-      <PanelGroup direction="horizontal" className="h-full w-full bg-background text-foreground">
-        <Panel defaultSize={14} minSize={10}><ThreadHistory /></Panel>
-        <PanelResizeHandle className="w-px bg-[var(--border)] hover:bg-[var(--primary)] transition-colors" />
-        <Panel defaultSize={16} minSize={10}><FileTree /></Panel>
-        <PanelResizeHandle className="w-px bg-[var(--border)] hover:bg-[var(--primary)] transition-colors" />
-        <Panel defaultSize={44} minSize={25}>{editorPane}</Panel>
-        <PanelResizeHandle className="w-px bg-[var(--border)] hover:bg-[var(--primary)] transition-colors" />
-        <Panel defaultSize={26} minSize={18}><ChatPane /></Panel>
-      </PanelGroup>
+      <SidebarProvider
+        style={{ "--sidebar-width": "16rem", "--header-height": "3rem" } as React.CSSProperties}
+      >
+        <AppSidebar />
+        <SidebarInset className="h-screen overflow-hidden">
+          <SiteHeader />
+          <div className="flex-1 min-h-0">
+            <PanelGroup direction="horizontal" className="h-full w-full bg-background text-foreground">
+              <Panel defaultSize={22} minSize={14}>
+                <FileTree />
+              </Panel>
+              <PanelResizeHandle className="w-px bg-[var(--border)] hover:bg-[var(--primary)] transition-colors" />
+              <Panel defaultSize={48} minSize={25}>{editorPane}</Panel>
+              <PanelResizeHandle className="w-px bg-[var(--border)] hover:bg-[var(--primary)] transition-colors" />
+              <Panel defaultSize={30} minSize={18}>
+                <ChatPane />
+              </Panel>
+            </PanelGroup>
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
     );
   }
 
