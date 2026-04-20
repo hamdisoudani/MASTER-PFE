@@ -11,7 +11,7 @@ Mistral's practical tool-count sweet spot.
 We now assemble the supervisor manually with:
   * ``langchain.agents.create_agent`` as the runtime
   * ``TodoListMiddleware`` for the supervisor ``write_todos`` tool
-  * ``SubAgentMiddleware`` (backed by the in-memory ``StateBackend``) so the
+  * ``SubAgentMiddleware`` (in-memory default backend) so the
     supervisor can call ``task(...)`` to dispatch a subagent
   * One ``create_agent`` per subagent, with ONLY the tools that subagent is
     allowed to use and its own ``TodoListMiddleware`` for internal planning.
@@ -24,7 +24,6 @@ import logging
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import TodoListMiddleware
-from deepagents.backends import StateBackend
 from deepagents.middleware.subagents import (
     CompiledSubAgent,
     SubAgentMiddleware,
@@ -158,8 +157,9 @@ def build_graph():
         middleware=[
             TodoListMiddleware(),
             SubAgentMiddleware(
-                backend=StateBackend(),
+                default_model=get_llm(),
                 subagents=subagents,
+                general_purpose_agent=False,
             ),
         ],
         checkpointer=get_checkpointer(),
