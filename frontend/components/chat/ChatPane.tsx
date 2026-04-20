@@ -1171,8 +1171,10 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
 
   // Per-thread settings (auto-accept etc). We subscribe to the slice for the
   // active thread so the UI re-renders when it flips.
+  // PR5: default auto-accept to true so the graph flows end-to-end. Users
+  // can still toggle it per-thread from the footer.
   const autoAccept = useThreadSettingsStore((s) =>
-    threadId ? s.byThread[threadId]?.autoAccept ?? false : false
+    threadId ? s.byThread[threadId]?.autoAccept ?? true : true
   );
   const toggleAutoAccept = useThreadSettingsStore((s) => s.toggleAutoAccept);
   const clearThreadSettings = useThreadSettingsStore((s) => s.clearThread);
