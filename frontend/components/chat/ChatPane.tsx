@@ -846,8 +846,22 @@ export function ChatPane() {
   const streamedTodos = ((stream as any).values?.todos ?? null) as
     | Array<{ id?: string; content?: string; status?: string }>
     | null;
+  // Signature-based change detection. We do NOT put `plan` in the dep
+  // array because `usePlanStore()` returns a new object on every store
+  // update — setPlan below mutates the store, which would re-run this
+  // effect, which would setPlan again, which would unmount the tree
+  // ("Application error: a client-side exception has occurred").
+  // Instead compute a stable signature of the incoming todos and skip
+  // the dispatch entirely when nothing meaningful changed.
+  const todosSignature = useMemo(() => {
+    if (!Array.isArray(streamedTodos)) return null;
+    return streamedTodos
+      .map((t, i) => `${t?.id ?? i}:${(t?.status ?? "pending")}:${(t?.content ?? "").slice(0, 120)}`)
+      .join("|");
+  }, [streamedTodos]);
   useEffect(() => {
     if (activeVariant !== "deep") return;
+    if (todosSignature === null) return;
     if (!Array.isArray(streamedTodos)) return;
     const normalized = streamedTodos.map((t, i) => {
       const raw = (t?.status ?? "pending").toString();
@@ -863,8 +877,10 @@ export function ChatPane() {
         status: status as "pending" | "in_progress" | "done",
       };
     });
-    plan.setPlan(normalized);
-  }, [activeVariant, streamedTodos, plan]);
+    // Reach into the store imperatively so we don't subscribe here and
+    // cause a re-render loop.
+    usePlanStore.getState().setPlan(normalized);
+  }, [activeVariant, todosSignature, streamedTodos]);
 
   // Build a tool_call_id -> ToolMessage.content lookup once per render so each
   // MessageBubble can show the matching result in its collapsible timeline.
