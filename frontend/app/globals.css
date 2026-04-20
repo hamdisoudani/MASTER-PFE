@@ -296,23 +296,23 @@ body {
 
 @layer base {
   :root {
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: #f5ede3;
+    --sidebar-foreground: #1a140e;
+    --sidebar-primary: #f66e60;
+    --sidebar-primary-foreground: #1a140e;
+    --sidebar-accent: #ece0d0;
+    --sidebar-accent-foreground: #1a140e;
+    --sidebar-border: #d9c9b4;
+    --sidebar-ring: #f66e60;
   }
   .dark {
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: #231a12;
+    --sidebar-foreground: #f5ede3;
+    --sidebar-primary: #f66e60;
+    --sidebar-primary-foreground: #1a140e;
+    --sidebar-accent: #2e2218;
+    --sidebar-accent-foreground: #f5ede3;
+    --sidebar-border: #3a2a1a;
+    --sidebar-ring: #f66e60;
   }
 }
