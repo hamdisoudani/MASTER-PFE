@@ -31,6 +31,7 @@ from langchain_core.messages import (
 )
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
+from langgraph.errors import GraphInterrupt
 
 from agent.critic import MAX_REVISIONS, evaluate_lesson, format_feedback
 from agent.llm import get_llm, get_model_family
@@ -210,6 +211,12 @@ async def frontend_tool_node(state: AgentState, config: RunnableConfig) -> dict[
                     "args": tc.get("args") or {},
                 }
             )
+        except GraphInterrupt:
+            # `interrupt()` raises GraphInterrupt to pause the graph so the
+            # browser can execute the tool and resume with a value. This is
+            # NOT an error path — re-raise so LangGraph can surface the
+            # interrupt to the SDK / useStream consumer.
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("frontend tool interrupt failed")
             tool_messages.append(
