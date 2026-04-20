@@ -592,6 +592,34 @@ const ToolCallTimeline = memo(function ToolCallTimeline({
   );
 });
 
+/**
+ * Detect a message that originated inside a deepagents subagent subgraph
+ * so we can render it with a distinct "live · subagent" badge. These
+ * messages arrive via `streamSubgraphs: true` while the subagent is
+ * running and are NOT persisted into parent state — deepagents only
+ * writes the task tool's final summary back to the supervisor. Once the
+ * run ends useStream re-syncs with server state and the ephemeral
+ * entries drop out of the thread naturally.
+ */
+function subagentOrigin(m: AnyMsg): string | null {
+  const mk = (m as any).additional_kwargs ?? {};
+  const rm = (m as any).response_metadata ?? {};
+  const ns: string | undefined =
+    rm.langgraph_checkpoint_ns ??
+    mk.langgraph_checkpoint_ns ??
+    rm.checkpoint_ns ??
+    mk.checkpoint_ns;
+  if (ns && typeof ns === "string" && ns.includes("|")) {
+    // deepagents subagent namespaces look like `task:<id>|<subagent_name>`.
+    const last = ns.split("|").pop() ?? "";
+    const name = last.split(":")[0];
+    if (name && name !== "supervisor") return name;
+  }
+  const node: string | undefined = rm.langgraph_node ?? mk.langgraph_node;
+  if (node && /^(researcher|writer|reviser)$/.test(node)) return node;
+  return null;
+}
+
 const MessageBubble = memo(function MessageBubble({
   m,
   toolResults,
@@ -611,6 +639,7 @@ const MessageBubble = memo(function MessageBubble({
   const calls = getToolCalls(m);
   const msgError = getMessageError(m);
   if (!text && !calls.length && !msgError) return null;
+  const sub = subagentOrigin(m);
   return (
     <div
       className={`rounded-md px-3 py-2 ${
@@ -618,12 +647,23 @@ const MessageBubble = memo(function MessageBubble({
           ? "bg-[var(--primary)]/10 border border-[var(--primary)]/30 text-[var(--foreground)]"
           : msgError
           ? "bg-[var(--muted)] border border-[var(--destructive)]/40 text-[var(--foreground)]"
+          : sub
+          ? "bg-[var(--muted)]/40 border border-dashed border-[var(--primary)]/40 text-[var(--foreground)]"
           : "bg-[var(--muted)] text-[var(--foreground)]"
       }`}
     >
       <div className="flex items-center justify-between mb-1">
-        <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">
+        <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] flex items-center gap-1.5">
           {isUser ? "You" : "Agent"}
+          {sub && (
+            <span
+              title="Streaming from a deepagents subagent — not persisted to the thread."
+              className="inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/10 px-1.5 py-0.5 text-[9px] font-medium text-[var(--primary)] normal-case tracking-normal"
+            >
+              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              live · {sub}
+            </span>
+          )}
         </div>
         {msgError && (
           <span
@@ -798,6 +838,34 @@ export function ChatPane() {
 
   const messages = (stream.messages ?? []) as AnyMsg[];
   const isStreaming = stream.isLoading;
+
+  // Deep variant uses deepagents' built-in `write_todos` tool which writes
+  // into `state.todos` (not into `plan-store`). Mirror that array into the
+  // existing plan-store whenever it changes so <PlanStrip/> renders one
+  // live plan for both classic and deep variants without forking the UI.
+  const streamedTodos = ((stream as any).values?.todos ?? null) as
+    | Array<{ id?: string; content?: string; status?: string }>
+    | null;
+  useEffect(() => {
+    if (activeVariant !== "deep") return;
+    if (!Array.isArray(streamedTodos)) return;
+    const normalized = streamedTodos.map((t, i) => {
+      const raw = (t?.status ?? "pending").toString();
+      const status =
+        raw === "completed" || raw === "done"
+          ? "done"
+          : raw === "in_progress"
+          ? "in_progress"
+          : "pending";
+      return {
+        id: t?.id ?? `deep-todo-${i}`,
+        title: String(t?.content ?? "").trim() || `Task ${i + 1}`,
+        status: status as "pending" | "in_progress" | "done",
+      };
+    });
+    plan.setPlan(normalized);
+  }, [activeVariant, streamedTodos, plan]);
+
   // Build a tool_call_id -> ToolMessage.content lookup once per render so each
   // MessageBubble can show the matching result in its collapsible timeline.
   const toolResults = useMemo(() => {
