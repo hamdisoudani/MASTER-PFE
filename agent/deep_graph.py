@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import SummarizationMiddleware, TodoListMiddleware
 from deepagents.middleware.subagents import (
     CompiledSubAgent,
     SubAgentMiddleware,
@@ -123,6 +123,29 @@ Call patchLessonBlocks(lessonId, blocks=[...]) exactly once, then reply
 with a one-line confirmation and stop."""
 
 
+
+import os as _os
+
+
+def _make_summarizer() -> SummarizationMiddleware:
+    """Long-running conversation summarizer.
+
+    Mirrors the open-swe / deepagents pattern: when the thread grows past a
+    fraction of the model's context window, older messages (excluding the
+    leading system prompt, which LC preserves) are replaced by an LLM-
+    generated summary. This is provider-safe — LC places the summary as a
+    HumanMessage/ToolMessage, never as a second SystemMessage, so Mistral /
+    GPT-5 / Claude never see "System message must be at the beginning."
+    """
+    max_tokens = int(_os.getenv("AGENT_MAX_TOKENS_BEFORE_SUMMARY", "96000"))
+    keep = int(_os.getenv("AGENT_SUMMARY_KEEP_MESSAGES", "20"))
+    return SummarizationMiddleware(
+        model=get_llm(),
+        trigger=("tokens", max_tokens),
+        keep=("messages", keep),
+    )
+
+
 def _build_subagent(name: str, prompt: str, tools: list) -> CompiledSubAgent:
     """Build a subagent as a CompiledSubAgent so SubAgentMiddleware doesn't
     inject its own backend/filesystem middleware stack.
@@ -133,7 +156,10 @@ def _build_subagent(name: str, prompt: str, tools: list) -> CompiledSubAgent:
         model=get_llm(),
         system_prompt=prompt,
         tools=tools,
-        middleware=[TodoListMiddleware()],
+        middleware=[
+            TodoListMiddleware(),
+            _make_summarizer(),
+        ],
         name=name,
     )
     return {
@@ -156,6 +182,7 @@ def build_graph():
         tools=[askUser],
         middleware=[
             TodoListMiddleware(),
+            _make_summarizer(),
             SubAgentMiddleware(
                 default_model=get_llm(),
                 subagents=subagents,

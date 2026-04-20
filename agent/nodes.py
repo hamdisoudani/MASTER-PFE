@@ -35,7 +35,7 @@ from langgraph.errors import GraphInterrupt
 
 from agent.critic import MAX_REVISIONS, evaluate_lesson, format_feedback
 from agent.llm import get_llm, get_model_family
-from agent.middleware import compact_history, ensure_no_empty_ai, normalize_system_messages
+from agent.middleware import compact_history, ensure_no_empty_ai, estimate_context_usage, normalize_system_messages
 from agent.prompts import build_system_prompt
 from agent.state import AgentState
 from agent.tools import PYTHON_TOOLS, PYTHON_TOOL_NAMES
@@ -96,6 +96,7 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
     compacted = compact_history(raw, token_budget=CONTEXT_TOKEN_BUDGET)
     compacted = ensure_no_empty_ai(compacted)
     messages = normalize_system_messages(compacted)
+    context_usage = estimate_context_usage(messages, CONTEXT_TOKEN_BUDGET)
 
     cfg = (config or {}).get("configurable", {}) or {}
     editor_ctx = cfg.get("editor_context")
@@ -118,7 +119,7 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
         return {"messages": [err_msg], "stop_reason": "error"}
 
     has_tool_calls = bool(getattr(response, "tool_calls", None))
-    out: dict[str, Any] = {"messages": [response]}
+    out: dict[str, Any] = {"messages": [response], "context_usage": context_usage}
     if not has_tool_calls:
         out["stop_reason"] = "completed"
     return out

@@ -205,7 +205,7 @@ def compact_history(messages: list[BaseMessage], token_budget: int = 12000) -> l
         return messages
 
     summary = _summarize_slice(older)
-    compacted: list[BaseMessage] = [SystemMessage(content=summary)] + recent
+    compacted: list[BaseMessage] = [HumanMessage(content="[compact-summary] " + summary)] + recent
     logger.info(
         "compact_history: compressed %d→%d messages (≈%d→%d tokens)",
         len(messages), len(compacted), _approx_tokens(messages), _approx_tokens(compacted),
@@ -245,22 +245,35 @@ def safe_tool_exception(exc: BaseException, tool_call_id: str) -> ToolMessage:
 
 
 def normalize_system_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
-    """Provider-agnostic: keep system messages ONLY at index 0.
+    """Provider-agnostic: strip ALL SystemMessages from thread history.
 
-    Any SystemMessage at index > 0 (e.g. critic feedback, user-rejection
-    nudges, compact_history summary injected mid-stream) is rewritten as
-    a HumanMessage tagged "[system-note] ..." so providers like Mistral
-    that require "System message must be at the beginning" stop rejecting
-    the conversation. Leading SystemMessages are left alone; chat_node
-    will prepend the real system prompt on top.
+    ``chat_node`` always prepends a fresh, authoritative SystemMessage
+    (``build_system_prompt``) at position 0 before calling the LLM. Any
+    SystemMessage that lives inside the persisted thread — critic feedback,
+    user-rejection nudges, compact_history summaries injected mid-stream, or
+    a SystemMessage accidentally saved at index 0 from a previous turn —
+    would push to index 1+ of the final payload and trip providers (Mistral,
+    GPT-5, Claude on Bedrock) with "System message must be at the beginning."
+
+    We rewrite EVERY SystemMessage in the thread as a
+    ``HumanMessage("[system-note] ...")`` so the information is preserved
+    verbatim and the model still sees it, while never violating the
+    provider invariant.
     """
     if not messages:
         return messages
     out: list[BaseMessage] = []
-    for i, m in enumerate(messages):
-        if isinstance(m, SystemMessage) and i != 0:
+    for m in messages:
+        if isinstance(m, SystemMessage):
             text = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
             out.append(HumanMessage(content="[system-note] " + text))
         else:
             out.append(m)
     return out
+
+
+def estimate_context_usage(messages: Iterable[BaseMessage], budget: int) -> dict:
+    """Return {tokens, budget, fraction} for the agent UI context-window meter."""
+    tok = _approx_tokens(messages)
+    frac = 0.0 if budget <= 0 else min(1.0, tok / float(budget))
+    return {"tokens": int(tok), "budget": int(budget), "fraction": round(frac, 4)}

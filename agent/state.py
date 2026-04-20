@@ -29,3 +29,6 @@ class AgentState(TypedDict, total=False):
     # Per-lessonId accumulator of blocks across addLesson + appendLessonContent
     # batches, so the critic evaluates the aggregate lesson, not each batch.
     lesson_blocks_cache: Optional[dict[str, list[dict[str, Any]]]]
+    # Context-window meter: {tokens, budget, fraction} updated each chat_node
+    # call so the UI can render an agent context-usage gauge.
+    context_usage: Optional[dict[str, Any]]
