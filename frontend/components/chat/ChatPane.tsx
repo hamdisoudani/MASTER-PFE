@@ -173,50 +173,54 @@ const FRONTEND_TOOLS = [
       },
     },
   },
-  {
-    name: "addLesson",
-    description: "Append a lesson to an existing chapter. `content` MUST be a BlockNote block array — each item a full block object matching the block schema (type, props, content[]).",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["chapterId", "lessonId", "title", "content"],
-      properties: {
-        chapterId: { type: "string" },
-        lessonId: { type: "string" },
-        title: { type: "string" },
-        content: { type: "array", items: BLOCK_SCHEMA },
-      },
-    },
-  },
-  {
-    name: "updateLessonContent",
-    description: "Replace the full BlockNote content of an existing lesson. Prefer patchLessonBlocks when only part of a lesson changes.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["lessonId", "content"],
-      properties: {
-        lessonId: { type: "string" },
-        content: { type: "array", items: BLOCK_SCHEMA },
-      },
-    },
-  },
-  {
-    name: "appendLessonContent",
-    description: "Append BlockNote blocks to the end of an existing lesson without removing prior content.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["lessonId", "blocks"],
-      properties: {
-        lessonId: { type: "string" },
-        blocks: { type: "array", items: BLOCK_SCHEMA },
-      },
-    },
-  },
+  // DEPRECATED (PR4) — lesson-mutation tools moved to curriculum-mcp.
+  // The agent now writes lessons directly to Supabase via MCP; the browser
+  // receives updates through a Supabase realtime subscription.
+  // Kept commented here for reference while the migration finishes.
+  // {
+  //   name: "addLesson",
+  //   description: "Append a lesson to an existing chapter. `content` MUST be a BlockNote block array — each item a full block object matching the block schema (type, props, content[]).",
+  //   strict: true,
+  //   parameters: {
+  //     type: "object",
+  //     additionalProperties: false,
+  //     required: ["chapterId", "lessonId", "title", "content"],
+  //     properties: {
+  //       chapterId: { type: "string" },
+  //       lessonId: { type: "string" },
+  //       title: { type: "string" },
+  //       content: { type: "array", items: BLOCK_SCHEMA },
+  //     },
+  //   },
+  // },
+  // {
+  //   name: "updateLessonContent",
+  //   description: "Replace the full BlockNote content of an existing lesson. Prefer patchLessonBlocks when only part of a lesson changes.",
+  //   strict: true,
+  //   parameters: {
+  //     type: "object",
+  //     additionalProperties: false,
+  //     required: ["lessonId", "content"],
+  //     properties: {
+  //       lessonId: { type: "string" },
+  //       content: { type: "array", items: BLOCK_SCHEMA },
+  //     },
+  //   },
+  // },
+  // {
+  //   name: "appendLessonContent",
+  //   description: "Append BlockNote blocks to the end of an existing lesson without removing prior content.",
+  //   strict: true,
+  //   parameters: {
+  //     type: "object",
+  //     additionalProperties: false,
+  //     required: ["lessonId", "blocks"],
+  //     properties: {
+  //       lessonId: { type: "string" },
+  //       blocks: { type: "array", items: BLOCK_SCHEMA },
+  //     },
+  //   },
+  // },
   {
     name: "getSyllabusOutline",
     description: "Read-only. Returns the skeleton of the current thread's syllabus. Pass null for syllabusId to use the active one.",
@@ -245,26 +249,14 @@ const FRONTEND_TOOLS = [
       },
     },
   },
-  {
-    name: "patchLessonBlocks",
-    description: "Surgical edit of a BlockNote lesson. op='replace' swaps blocks [startBlock..endBlock] with the provided blocks. op='insert' inserts before startBlock (endBlock is ignored, pass null). op='delete' removes [startBlock..endBlock] (blocks is ignored, pass null/[]). Block indices are 1-based and inclusive.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["lessonId", "op", "startBlock", "endBlock", "blocks"],
-      properties: {
-        lessonId: { type: "string" },
-        op: { type: "string", enum: ["replace", "insert", "delete"] },
-        startBlock: { type: "integer" },
-        endBlock: { type: ["integer", "null"] },
-        blocks: {
-          type: ["array", "null"],
-          items: BLOCK_SCHEMA,
-        },
-      },
-    },
-  },
+  // DEPRECATED (PR4) — patchLessonBlocks moved to curriculum-mcp. See git
+  // history on branch feat/supabase-mcp-curriculum for the original schema.
+  // {
+  //   name: "patchLessonBlocks",
+  //   description: "Surgical edit of a BlockNote lesson. op='replace' swaps blocks [startBlock..endBlock] with the provided blocks. op='insert' inserts before startBlock (endBlock is ignored, pass null). op='delete' removes [startBlock..endBlock] (blocks is ignored, pass null/[]). Block indices are 1-based and inclusive.",
+  //   strict: true,
+  //   parameters: { /* ...see git history for full schema... */ },
+  // },
   {
     name: "setPlan",
     description: "Replace the thread's task plan. Use this at the start of any non-trivial request to split the work into 3–7 sub-tasks. Status defaults to 'pending' — pass null if you don't want to set it explicitly.",
@@ -1179,8 +1171,10 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
 
   // Per-thread settings (auto-accept etc). We subscribe to the slice for the
   // active thread so the UI re-renders when it flips.
+  // PR5: default auto-accept to true so the graph flows end-to-end. Users
+  // can still toggle it per-thread from the footer.
   const autoAccept = useThreadSettingsStore((s) =>
-    threadId ? s.byThread[threadId]?.autoAccept ?? false : false
+    threadId ? s.byThread[threadId]?.autoAccept ?? true : true
   );
   const toggleAutoAccept = useThreadSettingsStore((s) => s.toggleAutoAccept);
   const clearThreadSettings = useThreadSettingsStore((s) => s.clearThread);
@@ -1439,11 +1433,32 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
     const dispatch: Record<string, () => any> = {
       createSyllabus: () => store.createSyllabus(a.id, a.title, a.subject, nn(a.description)),
       addChapter: () => store.addChapter(a.syllabusId, a.chapterId, a.title, nn(a.description)),
-      addLesson: () => store.addLesson(a.chapterId, a.lessonId, a.title, a.content ?? []),
-      updateLessonContent: () => store.updateLessonContent(a.lessonId, a.content ?? []),
-      appendLessonContent: () => store.appendLessonContent(a.lessonId, a.blocks ?? []),
-      patchLessonBlocks: () =>
-        store.patchLessonBlocks(a.lessonId, a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
+      // DEPRECATED (PR4) — lesson mutations moved to curriculum-mcp. The MCP
+      // server writes directly to Supabase; the UI re-renders via the realtime
+      // subscription. The dispatch entries below are kept as a reference and
+      // a defensive no-op in case a stale agent still emits them.
+      addLesson: () => {
+        console.warn("[PR4] addLesson frontend tool is deprecated — writes now go through curriculum-mcp");
+        return null;
+      },
+      updateLessonContent: () => {
+        console.warn("[PR4] updateLessonContent frontend tool is deprecated — writes now go through curriculum-mcp");
+        return null;
+      },
+      appendLessonContent: () => {
+        console.warn("[PR4] appendLessonContent frontend tool is deprecated — writes now go through curriculum-mcp");
+        return null;
+      },
+      patchLessonBlocks: () => {
+        console.warn("[PR4] patchLessonBlocks frontend tool is deprecated — writes now go through curriculum-mcp");
+        return null;
+      },
+      // Original dispatch (kept for reference):
+      // addLesson: () => store.addLesson(a.chapterId, a.lessonId, a.title, a.content ?? []),
+      // updateLessonContent: () => store.updateLessonContent(a.lessonId, a.content ?? []),
+      // appendLessonContent: () => store.appendLessonContent(a.lessonId, a.blocks ?? []),
+      // patchLessonBlocks: () =>
+      //   store.patchLessonBlocks(a.lessonId, a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
       getSyllabusOutline: () => store.getSyllabusOutline(nn(a.syllabusId)),
       readLessonBlocks: () =>
         store.readLessonBlocks(a.lessonId, a.startBlock, a.endBlock),

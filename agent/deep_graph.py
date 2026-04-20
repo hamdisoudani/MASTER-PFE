@@ -30,15 +30,18 @@ from deepagents.middleware.subagents import (
 )
 
 from agent.checkpointer import get_checkpointer
-from agent.frontend_shells import (
-    addLesson,
-    appendLessonContent,
-    askUser,
-    patchLessonBlocks,
-    updateLessonContent,
-)
+from agent.frontend_shells import askUser
 from agent.llm import get_llm
-from agent.tools import web_search, scrape_page
+from agent.tools import web_search, scrape_page, load_curriculum_tools
+
+# (PR4) addLesson / updateLessonContent / appendLessonContent / patchLessonBlocks
+# used to be frontend interrupt shells imported from agent.frontend_shells. They
+# are now MCP tools served by curriculum-mcp and resolved lazily at graph build
+# time via `_mcp_tools_by_name()`. See build_graph() below.
+# Original import (kept for reference):
+# from agent.frontend_shells import (
+#     addLesson, appendLessonContent, patchLessonBlocks, updateLessonContent,
+# )
 
 logger = logging.getLogger(__name__)
 
@@ -169,11 +172,30 @@ def _build_subagent(name: str, prompt: str, tools: list) -> CompiledSubAgent:
     }
 
 
+def _mcp_tools_by_name() -> dict:
+    """Load curriculum-mcp tools and index them by name.
+
+    Returns an empty dict when CURRICULUM_MCP_URL is unset or the server is
+    unreachable, so the deep graph still builds for local dev / CI.
+    """
+    try:
+        return {t.name: t for t in load_curriculum_tools()}
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("deep_graph: could not load curriculum MCP tools: %s", e)
+        return {}
+
+
 def build_graph():
+    mcp = _mcp_tools_by_name()
+    writer_tools = [mcp[n] for n in ("addLesson", "updateLessonContent", "appendLessonContent") if n in mcp]
+    reviser_tools = [mcp[n] for n in ("patchLessonBlocks",) if n in mcp]
+    if not writer_tools:
+        logger.warning("deep_graph: writer subagent has no lesson-mutation tools (curriculum-mcp unavailable)")
+
     subagents: list[CompiledSubAgent] = [
         _build_subagent("researcher", RESEARCHER_PROMPT, [web_search, scrape_page]),
-        _build_subagent("writer",     WRITER_PROMPT,     [addLesson, updateLessonContent, appendLessonContent]),
-        _build_subagent("reviser",    REVISER_PROMPT,    [patchLessonBlocks]),
+        _build_subagent("writer",     WRITER_PROMPT,     writer_tools),
+        _build_subagent("reviser",    REVISER_PROMPT,    reviser_tools),
     ]
 
     agent = create_agent(

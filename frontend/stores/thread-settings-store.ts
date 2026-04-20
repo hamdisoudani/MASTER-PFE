@@ -15,7 +15,14 @@ interface ThreadSettingsState {
   clearThread: (threadId: string) => void;
 }
 
-const DEFAULT_SETTINGS: ThreadSettings = { autoAccept: false };
+// PR5 — curriculum writes now go through the Supabase-backed curriculum-mcp
+// server, so there is no destructive frontend tool interrupt left that needs
+// explicit approval (lesson mutations were retired in PR4). We default
+// `autoAccept` to true so planning/ask-user flows run end-to-end without a
+// manual approve click. Users can still toggle it off from the ChatPane.
+// Previous default:
+// const DEFAULT_SETTINGS: ThreadSettings = { autoAccept: false };
+const DEFAULT_SETTINGS: ThreadSettings = { autoAccept: true };
 const NO_THREAD_KEY = "__default__";
 
 function keyFor(threadId: string | null | undefined): string {
@@ -32,7 +39,7 @@ export const useThreadSettingsStore = create<ThreadSettingsState>()(
       },
       getAutoAccept: (threadId) => {
         const key = keyFor(threadId);
-        return get().byThread[key]?.autoAccept ?? false;
+        return get().byThread[key]?.autoAccept ?? DEFAULT_SETTINGS.autoAccept;
       },
       setAutoAccept: (threadId, enabled) => {
         const key = keyFor(threadId);
@@ -64,6 +71,6 @@ export const useThreadSettingsStore = create<ThreadSettingsState>()(
         });
       },
     }),
-    { name: "thread-settings-v1", version: 1 }
+    { name: "thread-settings-v2", version: 2 }
   )
 );

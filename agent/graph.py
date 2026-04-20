@@ -16,15 +16,14 @@ from agent.nodes import (
     route_after_frontend_tools,
 )
 from agent.state import AgentState
-from agent.tools import PYTHON_TOOLS
+from agent.tools import PYTHON_TOOLS, PYTHON_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
-
+logger.info("server-side tools (python + curriculum-mcp): %s", sorted(PYTHON_TOOL_NAMES))
 
 def _tool_error_handler(exc: Exception) -> str:
     logger.exception("tool execution raised: %s", exc)
     return json.dumps({"error": str(exc), "type": exc.__class__.__name__})
-
 
 def build_graph():
     g = StateGraph(AgentState)
@@ -55,6 +54,5 @@ def build_graph():
     if cp is not None:
         return g.compile(checkpointer=cp)
     return g.compile()
-
 
 graph = build_graph()

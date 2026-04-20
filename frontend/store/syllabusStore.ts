@@ -197,6 +197,13 @@ function updateSlice(
   };
 }
 
+/**
+ * @deprecated (PR4) — Lesson/chapter/syllabus mutations are now performed by
+ * the agent via the curriculum-mcp server, which writes directly to Supabase.
+ * The browser should treat the store as read-only for these entities and
+ * rely on a Supabase realtime subscription to stay in sync. These methods
+ * remain here only as a reference and a local-fallback for offline demos.
+ */
 export const useSyllabusStore = create<SyllabusStore>()(
   persist(
     (set, get) => ({
@@ -244,6 +251,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
             : { byThread };
         }),
 
+      // @deprecated (PR4) — use curriculum-mcp via the agent; see syllabusStore banner.
       createSyllabus: (id, title, subject, description) =>
         set((state) =>
           updateSlice(state, (s) => ({
@@ -263,6 +271,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
           }))
         ),
 
+      // @deprecated (PR4) — use curriculum-mcp via the agent; see syllabusStore banner.
       addChapter: (syllabusId, chapterId, title, description) =>
         set((state) =>
           updateSlice(state, (s) => ({
@@ -288,6 +297,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
           }))
         ),
 
+      // @deprecated (PR4) — use curriculum-mcp via the agent; see syllabusStore banner.
       addLesson: (chapterId, lessonId, title, content) =>
         set((state) =>
           updateSlice(state, (s) => ({
@@ -310,6 +320,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
           }))
         ),
 
+      // @deprecated (PR4) — use curriculum-mcp via the agent; see syllabusStore banner.
       updateLessonContent: (lessonId, content) =>
         set((state) =>
           updateSlice(state, (s) => ({
@@ -326,6 +337,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
           }))
         ),
 
+      // @deprecated (PR4) — use curriculum-mcp via the agent; see syllabusStore banner.
       appendLessonContent: (lessonId, blocks) =>
         set((state) =>
           updateSlice(state, (s) => ({
@@ -441,6 +453,7 @@ export const useSyllabusStore = create<SyllabusStore>()(
           })
         ),
 
+      // @deprecated (PR4) — use curriculum-mcp via the agent; see syllabusStore banner.
       patchLessonBlocks: (lessonId, op, startBlock, endBlock, blocks) => {
         let result: { ok: boolean; error?: string; changed?: number; totalBlocks?: number } = { ok: false, error: 'unknown' };
         set((state) =>
