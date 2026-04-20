@@ -1508,40 +1508,6 @@ export function ChatPane() {
     submitUserText(text);
   }, [isStreaming, messages, submitUserText]);
 
-  // Auto-retry transient stream errors (network blips / upstream 502s) so a
-  // single provider hiccup doesn't force the user to hit Retry manually. We
-  // cap at MAX_AUTO_RETRIES per distinct error instance and skip obvious
-  // non-retryable errors (auth, 4xx other than 408/429).
-  const autoRetryRef = useRef<{ err: unknown; count: number } | null>(null);
-  const MAX_AUTO_RETRIES = 2;
-  useEffect(() => {
-    if (!streamError) { autoRetryRef.current = null; return; }
-    if (isStreaming) return;
-    const prev = autoRetryRef.current;
-    const sameErr = prev && prev.err === streamError;
-    const count = sameErr ? prev!.count : 0;
-    if (count >= MAX_AUTO_RETRIES) return;
-    const msg = ((): string => {
-      const e: any = streamError;
-      return String(e?.message ?? e?.error ?? e ?? "");
-    })().toLowerCase();
-    const isRetryable =
-      msg.includes("network") ||
-      msg.includes("fetch") ||
-      msg.includes("econnreset") ||
-      msg.includes("timeout") ||
-      msg.includes("timed out") ||
-      msg.includes("502") ||
-      msg.includes("503") ||
-      msg.includes("504") ||
-      msg.includes("429");
-    if (!isRetryable) return;
-    autoRetryRef.current = { err: streamError, count: count + 1 };
-    const delay = 800 * Math.pow(2, count);
-    const t = setTimeout(() => { try { onRetry(); } catch {} }, delay);
-    return () => clearTimeout(t);
-  }, [streamError, isStreaming, onRetry]);
-
   const onStop = useCallback(async () => {
     // SDK exposes the active run id at `stream.runId` or `stream.meta?.runId`
     // depending on version; fall back to cancelling ALL runs on the thread.
