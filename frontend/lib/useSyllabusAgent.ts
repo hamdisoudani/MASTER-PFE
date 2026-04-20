@@ -27,6 +27,11 @@ export function useSyllabusAgent({ threadId, onThreadId, variant }: StreamOpts =
     messagesKey: "messages" as const,
     reconnectOnMount: true,
     fetchStateHistory: true,
+    // Stream messages from deepagents subagent subgraphs so the user sees
+    // researcher / writer / reviser work live. Subagent messages are NOT
+    // persisted into parent state (deepagents default), so they naturally
+    // disappear from the thread once the run ends.
+    streamSubgraphs: true,
     defaultHeaders: langgraphHeaders(),
     onThreadId,
   };
