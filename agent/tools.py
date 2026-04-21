@@ -24,41 +24,36 @@ async def scrape_page(url: str) -> str:
     return f"Failed to scrape {url}: {result.get('error','unknown error')}"
 
 @tool
-async def submit_plan(steps: list[dict]) -> str:
-    """Register the authoring plan for the current thread.
+async def submit_plan(chapters: list[dict]) -> str:
+    """Register the hierarchical authoring plan.
 
-    Call this ONCE after the user has confirmed what they want, before
-    writing any lesson. `steps` is the ordered list of lessons you will
-    author, each step a dict:
-      - chapter_title: str (required) — the chapter this lesson lives in
-      - lesson_title : str (required) — the title of the lesson itself
-      - brief        : str (optional) — 1-2 sentence description of what
-                       this lesson must cover, used as the writer's brief
+    Call this ONCE, after you have agreed with the user on scope and before
+    authoring anything. The graph then drives the agent chapter-by-chapter,
+    lesson-by-lesson, advancing the cursor deterministically.
 
-    The graph persists the plan to agent state and routes the writer
-    through each step in order. You do NOT decide when to move on — the
-    graph advances the cursor automatically after the critic passes a
-    lesson. To change the plan mid-run, call submit_plan again with the
-    full updated list. Returns a confirmation with the normalized plan.
+    Args:
+        chapters: ordered list. Each item:
+            {
+              "title":   str   # chapter title
+              "summary": str   # 1-2 sentence chapter summary
+              "lessons": [
+                  {"title": str, "brief": str},  # brief = 1-2 sentence scope
+                  ...
+              ],
+            }
+
+    Returns:
+        Human-readable confirmation. The actual plan lives in agent state
+        (see tools_post_hook), so subsequent nodes can advance the cursor
+        without re-parsing the tool call.
     """
-    normalized = []
-    for i, step in enumerate(steps or []):
-        if not isinstance(step, dict):
-            continue
-        normalized.append({
-            "chapter_title": str(step.get("chapter_title") or "").strip(),
-            "lesson_title": str(step.get("lesson_title") or "").strip(),
-            "brief": str(step.get("brief") or "").strip(),
-            "status": "pending",
-            "attempts": 0,
-            "draft_lesson_id": None,
-        })
-    # A marker the tools_post_hook recognizes to flip state. Returning the
-    # JSON envelope here lets the model see the plan echoed back.
-    import json as _json
-    return _json.dumps({"ok": True, "step_count": len(normalized),
-                        "plan": normalized,
-                        "_submit_plan_marker": True})
+    total_chapters = len(chapters or [])
+    total_lessons = sum(len((c or {}).get("lessons") or []) for c in (chapters or []))
+    return (
+        f"Plan registered: {total_chapters} chapters, {total_lessons} lessons. "
+        "The graph will advance you through them one at a time — do not pick the "
+        "next step yourself, follow the SystemMessage you receive after each pass."
+    )
 
 
 BUILTIN_PYTHON_TOOLS = [web_search, scrape_page, submit_plan]
@@ -66,7 +61,11 @@ BUILTIN_PYTHON_TOOLS = [web_search, scrape_page, submit_plan]
 # The "normal" (classic) syllabus agent writes to the IN-MEMORY DRAFT store.
 # Persistent Supabase-backed mutations are reserved for the writer / summarizer
 # subagents in the deep graph (see agent/deep_graph.py).
-CURRICULUM_MCP_TOOLS = load_curriculum_tools(mode="draft")
+# v2: syllabus_agent now writes to Supabase directly via persistent tools.
+# The old draft-store path is still available to subagents (deep_graph) via
+# load_curriculum_tools(mode="draft") elsewhere, but the classic agent has no
+# business holding data in a volatile in-memory bucket.
+CURRICULUM_MCP_TOOLS = load_curriculum_tools(mode="persistent")
 
 PYTHON_TOOLS = list(BUILTIN_PYTHON_TOOLS) + list(CURRICULUM_MCP_TOOLS)
 PYTHON_TOOL_NAMES: set[str] = {t.name for t in PYTHON_TOOLS}

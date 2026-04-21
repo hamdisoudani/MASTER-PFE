@@ -353,6 +353,41 @@ def _render_thread_id(thread_id: str | None) -> str:
     )
 
 
+V2_AUTHORING_OVERRIDE = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+V2 AUTHORING CONTRACT — this overrides the older draft-first guidance below.
+
+You write DIRECTLY to Supabase via the persistent MCP tools. Do NOT use any
+`draft*` tool in this flow. The draft store is reserved for a different
+subagent and will not be promoted by this graph.
+
+The graph drives you through a hierarchical state machine. Do not choose the
+next stage yourself — after each persistent tool call, the graph will inject
+a SystemMessage of the form "AUTHORING PHASE · stage = X" telling you which
+single tool to call next.
+
+Stages and the exact tool to call:
+  1. planning          → discuss scope with the user via askUser.
+                         When agreed, call submit_plan(chapters=[
+                             {title, summary, lessons:[{title, brief}, ...]},
+                             ...
+                         ]) exactly once.
+  2. syllabus_create   → getOrCreateSyllabus(thread_id, title).
+  3. chapter_propose   → addChapter(syllabus_id, title, summary, position).
+  4. lesson_outline    → addLesson(chapter_id, title, blocks=[scaffold with
+                         the six required H2 sections]).
+  5. lesson_content    → appendLessonContent(lesson_id, blocks=[...]).
+                         Keep appending in 2–3 batches until the critic
+                         passes the aggregate lesson.
+  6. done              → summarize for the user.
+
+Rules during authoring (stages 2–5):
+  - Emit EXACTLY ONE tool call per turn. No prose, no explanation.
+  - The critic/plan-router will tell you whether to revise or advance.
+  - Never call a `draft*` tool. Never re-plan mid-run. Never jump ahead.
+  - If the critic says REVISE, call appendLessonContent / updateLessonContent
+    / patchLessonBlocks on the SAME lesson_id — do not create a new lesson.
+"""
+
 def build_system_prompt(
     state: AgentState,
     frontend_tool_defs: list[dict[str, Any]] | None = None,
@@ -363,6 +398,7 @@ def build_system_prompt(
     ed_ctx = editor_context_override if editor_context_override is not None else state.get("editor_context")
     parts = [
         ROLE,
+        V2_AUTHORING_OVERRIDE,
         QUALITY,
         TOOL_JSON_RULES,
         PYTHON_TOOLS_DOC,

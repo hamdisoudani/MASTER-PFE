@@ -44,3 +44,28 @@ class AgentState(TypedDict, total=False):
     plan: Optional[list[dict[str, Any]]]
     plan_cursor: Optional[int]
     phase: Optional[str]
+    # --- v2 hierarchical authoring (syllabus_agent) ---
+    # `plan` is now CHAPTER-level: each chapter has nested lessons. The graph
+    # drives (chapter_cursor, lesson_cursor) deterministically, and writes
+    # Supabase IDs back into the plan as the agent commits each entity.
+    #
+    # plan: [
+    #   {
+    #     "title": str, "summary": str, "status": pending|writing|done|failed,
+    #     "chapter_id": Optional[str],   # filled after addChapter
+    #     "lessons": [
+    #        {
+    #          "title": str, "brief": str,
+    #          "status": pending|outline|content|done|failed,
+    #          "lesson_id": Optional[str],    # filled after addLesson
+    #          "attempts": int,
+    #        }, ...
+    #     ],
+    #   }, ...
+    # ]
+    chapter_cursor: Optional[int]
+    lesson_cursor: Optional[int]
+    syllabus_id: Optional[str]
+    # Fine-grained stage within `phase="authoring"` — lets the SystemMessage
+    # nudges be specific about which persistent tool to call next.
+    stage: Optional[str]

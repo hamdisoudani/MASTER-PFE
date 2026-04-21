@@ -55,7 +55,11 @@ def build_graph():
     g.add_conditional_edges(
         "tools_post_hook",
         route_after_python_tools,
-        {"critic_node": "critic_node", "chat_node": "chat_node"},
+        {
+            "critic_node": "critic_node",
+            "plan_router": "plan_router",
+            "chat_node": "chat_node",
+        },
     )
     g.add_conditional_edges(
         "frontend_tools",
