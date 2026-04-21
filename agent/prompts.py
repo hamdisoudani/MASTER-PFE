@@ -302,7 +302,24 @@ So you are the first line of defence on drafts:
      can decide whether to promote the draft as-is."""
 
 
-def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None, editor_context_override: dict[str, Any] | None = None) -> str:
+def _render_thread_id(thread_id: str | None) -> str:
+    if not thread_id:
+        return ""
+    return (
+        "THREAD CONTEXT\n"
+        f"- Active thread_id: {thread_id}\n"
+        "- Pass this EXACT value as the `thread_id` argument to every\n"
+        "  draft* tool call in this run. Do not invent a new one or the\n"
+        "  draft store will fork and you will lose prior lessons."
+    )
+
+
+def build_system_prompt(
+    state: AgentState,
+    frontend_tool_defs: list[dict[str, Any]] | None = None,
+    editor_context_override: dict[str, Any] | None = None,
+    thread_id: str | None = None,
+) -> str:
     defs = frontend_tool_defs or []
     ed_ctx = editor_context_override if editor_context_override is not None else state.get("editor_context")
     parts = [
@@ -315,6 +332,7 @@ def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, An
         BATCH_WRITING,
         CRITIC_GATE,
         LOOP,
+        _render_thread_id(thread_id),
         _render_editor_context(ed_ctx),
     ]
     return "\n\n".join(p for p in parts if p)
