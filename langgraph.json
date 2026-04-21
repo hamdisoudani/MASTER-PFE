@@ -6,6 +6,9 @@
     "syllabus_agent": "./agent/graph.py:graph",
     "syllabus_agent_deep": "./agent/deep_graph.py:graph"
   },
+  "http": {
+    "app": "./agent/http_app.py:app"
+  },
   "env": "./agent/.env",
   "python_version": "3.11"
 }
