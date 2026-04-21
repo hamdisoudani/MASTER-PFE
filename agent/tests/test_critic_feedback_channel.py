@@ -6,6 +6,8 @@ turn so the UI never sees it.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -21,7 +23,8 @@ def _fake_state(messages, feedback=None):
     }
 
 
-def test_critic_writes_to_channel_not_messages(monkeypatch):
+@pytest.mark.asyncio
+async def test_critic_writes_to_channel_not_messages(monkeypatch):
     bad_blocks = [{"type": "heading", "text": "x"}]
     monkeypatch.setattr(
         critic_mod,
@@ -29,34 +32,62 @@ def test_critic_writes_to_channel_not_messages(monkeypatch):
         lambda blocks: {"pass": False, "issues": ["too short"], "stats": {"blocks": 1}},
     )
 
+    tool_msg = SimpleNamespace(
+        type="tool",
+        name="addLesson",
+        tool_call_id="c1",
+        content="{}",
+        artifact=None,
+    )
     ai = AIMessage(
         content="",
         tool_calls=[{"id": "c1", "name": "addLesson",
-                     "args": {"chapter_id": "ch1", "title": "Intro", "blocks": bad_blocks}}],
+                     "args": {"chapter_id": "ch1", "lesson_id": "L1",
+                              "title": "Intro", "blocks": bad_blocks}}],
     )
-    state = _fake_state([HumanMessage(content="write lesson"), ai])
-    out = critic_mod.critic_node(state)
+    state = _fake_state([HumanMessage(content="write lesson"), ai, tool_msg])
+    state["last_authored_lesson"] = {
+        "lesson_id": "L1",
+        "chapter_id": "ch1",
+        "title": "Intro",
+        "blocks": bad_blocks,
+        "tool": "addLesson",
+    }
 
-    assert "critic_feedback" in out, "critic must write to the dedicated channel"
-    assert isinstance(out["critic_feedback"], str)
+    out = await nodes_mod.critic_node(state, {})
+
+    assert isinstance(out.get("critic_feedback"), str)
     assert "too short" in out["critic_feedback"]
-    for m in out.get("messages", []):
-        assert not isinstance(m, SystemMessage), "critic must not append SystemMessage to messages"
+    for m in out.get("messages", []) or []:
+        assert not isinstance(m, SystemMessage), (
+            "critic must not append SystemMessage to messages"
+        )
 
 
-def test_chat_node_consumes_and_clears_feedback(monkeypatch):
+@pytest.mark.asyncio
+async def test_chat_node_consumes_and_clears_feedback(monkeypatch):
     seen = {}
 
-    def fake_build(**kwargs):
-        seen.update(kwargs)
+    def fake_build(state, frontend_defs, editor_ctx, *, thread_id=None,
+                   critic_feedback=None, **kw):
+        seen["critic_feedback"] = critic_feedback
         return "SYSTEM PROMPT WITH FEEDBACK"
 
+    class FakeBound:
+        async def ainvoke(self, msgs, config=None):
+            return AIMessage(content="ok")
+
+    class FakeLLM:
+        def bind_tools(self, tools, **kw):
+            return FakeBound()
+
     monkeypatch.setattr(nodes_mod, "build_system_prompt", fake_build)
-    monkeypatch.setattr(nodes_mod, "_invoke_model",
-                        lambda sys, msgs, **kw: AIMessage(content="ok"))
+    monkeypatch.setattr(nodes_mod, "get_llm", lambda: FakeLLM())
 
     state = _fake_state([HumanMessage(content="retry")], feedback="FIX: add 3 blocks")
-    out = nodes_mod.chat_node(state)
+    out = await nodes_mod.chat_node(state, {})
 
     assert seen.get("critic_feedback") == "FIX: add 3 blocks"
-    assert out.get("critic_feedback") is None, "chat_node must clear the channel after use"
+    assert out.get("critic_feedback") is None, (
+        "chat_node must clear the channel after use"
+    )
