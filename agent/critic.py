@@ -1,11 +1,20 @@
 """Deterministic quality rubric for authored BlockNote lessons.
 
-This node does NOT call an LLM. It runs a set of cheap, deterministic
-checks against the block array the agent just submitted via a frontend
-mutation tool (addLesson / updateLessonContent / appendLessonContent /
-patchLessonBlocks). On failure it returns a structured list of concrete
-fix instructions that chat_node injects as a SystemMessage, which is
-observably more reliable than hoping the prompt alone is enforced.
+This node does NOT call an LLM. It runs cheap deterministic checks on
+the block array the agent just submitted via a frontend mutation tool
+(``addLesson`` / ``updateLessonContent`` / ``appendLessonContent`` /
+``patchLessonBlocks``).
+
+On failure it returns:
+  - ``report``: structured dict ``{pass, issues[], stats{}}`` stored in
+    ``state.critique`` and ``state.critic_reports[lesson_id]`` for
+    telemetry and UI chips.
+  - ``feedback``: a concrete revision instruction string injected into
+    the *fresh* system prompt on the next chat_node turn via
+    ``state.critic_feedback``. This replaces the old ``SystemMessage``
+    injection into ``messages`` which (a) leaked into the UI and
+    (b) was stripped by ``middleware.normalize_system_messages`` before
+    the LLM ever saw it.
 
 Rubric (tuneable via env):
   - Minimum block count (default 18).
@@ -14,8 +23,7 @@ Rubric (tuneable via env):
   - Forbidden placeholder tokens in any text run: "...", "…", "etc.",
     "and so on", "TODO", "<fill in>".
   - Block-type variety (>=3 distinct types).
-  - Minimum number of practice items when the "Practice" section is
-    present (>= 5 numbered/bullet list items in a trailing run).
+  - Minimum practice items when the "Practice" section is present.
 """
 from __future__ import annotations
 import os
@@ -41,14 +49,6 @@ FORBIDDEN_PATTERNS = [
     r"\bTODO\b",
     r"<\s*fill[\s_-]*in\s*>",
 ]
-
-CANNED_HOOK_PATTERNS = [
-    r"^\s*in this (course|lesson|chapter)[^.]{0,80}you will learn",
-    r"^\s*by the end of this (course|lesson|chapter)[^.]{0,80}you will",
-    r"^\s*welcome to this (course|lesson|chapter)",
-    r"^\s*this (course|lesson|chapter) (is|will be) about",
-]
-_CANNED_HOOK_RE = re.compile("|".join(CANNED_HOOK_PATTERNS), re.IGNORECASE)
 _FORBIDDEN_RE = re.compile("|".join(FORBIDDEN_PATTERNS), re.IGNORECASE)
 
 
@@ -76,7 +76,7 @@ def _h2_titles(blocks: list[dict[str, Any]]) -> list[str]:
 
 
 def evaluate_lesson(blocks: Any) -> dict[str, Any]:
-    """Return {"pass": bool, "issues": [str, ...], "stats": {...}}."""
+    """Return ``{"pass": bool, "issues": [...], "stats": {...}}``."""
     issues: list[str] = []
     if not isinstance(blocks, list) or not blocks:
         return {"pass": False, "issues": ["Lesson content is empty or not a block array."], "stats": {}}
@@ -108,26 +108,8 @@ def evaluate_lesson(blocks: Any) -> dict[str, Any]:
     if banned:
         issues.append(
             "Forbidden placeholder tokens found: " + ", ".join(sorted(banned))
-            + '. The hard rule is: enumerate EVERY item in any sequence — no ellipses, no "etc.", no "and so on".'
+            + '. Enumerate EVERY item — no ellipses, no "etc.", no "and so on".'
         )
-
-
-    first_para = next(
-        (b for b in blocks
-         if isinstance(b, dict) and b.get("type") == "paragraph"
-         and _flatten_text(b).strip()),
-        None,
-    )
-    if first_para is not None:
-        opener = _flatten_text(first_para).strip()
-        if _CANNED_HOOK_RE.search(opener):
-            issues.append(
-                'Opening hook is a canned boilerplate ("In this course you will learn..." / '
-                '"By the end of this lesson you will..." / "Welcome to..."). '
-                "Rewrite it as an ADAPTIVE opener drawn from the lesson's real source "
-                "material: a concrete fact, a question, an example, a short anecdote, "
-                "or a surprising number."
-            )
 
     has_practice = any("practice" in h for h in h2s)
     if has_practice:
@@ -155,7 +137,27 @@ def evaluate_lesson(blocks: Any) -> dict[str, Any]:
     return {"pass": not issues, "issues": issues, "stats": stats}
 
 
+def structured_critique(lesson_id: str, report: dict[str, Any], *, tool: str | None = None,
+                        title: str | None = None) -> dict[str, Any]:
+    """Build the structured dict stored in ``state.critique``.
+
+    Kept as a pure helper so tests and UI chips can reuse the shape.
+    """
+    return {
+        "lesson_id": lesson_id,
+        "tool": tool,
+        "title": title,
+        "pass": bool(report.get("pass")),
+        "issues": list(report.get("issues") or []),
+        "stats": dict(report.get("stats") or {}),
+    }
+
+
 def format_feedback(lesson_key: str, report: dict[str, Any]) -> str:
+    """Plain-text revision instructions. Injected into the NEXT system prompt
+    via ``state.critic_feedback`` — NOT into ``state.messages`` (which would
+    leak into the chat UI and be stripped by ``normalize_system_messages``).
+    """
     if report.get("pass"):
         return f"Quality check PASSED for lesson {lesson_key}."
     bullets = "\n".join(f"  - {iss}" for iss in report.get("issues", []))
@@ -166,4 +168,19 @@ def format_feedback(lesson_key: str, report: dict[str, Any]) -> str:
         "Next step: call readLessonBlocks to read the current state, then use "
         "patchLessonBlocks (op='replace' or 'insert') to add the missing sections "
         "and expand short ones. Do NOT rewrite the whole lesson; patch surgically."
+    )
+
+
+def format_exhausted(lesson_key: str, report: dict[str, Any]) -> str:
+    """User-facing message when MAX_REVISIONS is exceeded. Published ONCE
+    to ``state.messages`` (UI-visible) so the user knows why the loop
+    stopped and can decide whether to promote as-is.
+    """
+    bullets = "\n".join(f"  • {iss}" for iss in report.get("issues", []))
+    return (
+        f"I hit my self-revision limit ({MAX_REVISIONS} passes) on lesson "
+        f"**{lesson_key}** and the automated quality checks still flag:\n\n"
+        f"{bullets}\n\n"
+        "Let me know if you want me to keep iterating, promote the draft as-is, "
+        "or focus on a specific gap."
     )
