@@ -30,17 +30,20 @@ ELIDABLE_MUTATION_TOOLS = {
     "updateLessonContent",
     "appendLessonContent",
     "patchLessonBlocks",
-    # Activity mutations (PR-A1): same GC semantics — full payloads are
-    # large and the Supabase row is the source of truth, so we keep the
-    # AI plan but elide the bulky tool-result blobs from persisted history.
-    "addActivity",
-    "patchActivity",
-    "deleteActivity",
+    "draftAddLesson",
+    "draftUpdateLessonContent",
+    "draftAppendLessonContent",
+    "draftPatchLessonBlocks",
 }
 ELIDABLE_READ_TOOLS = {
-    "scrape_page", "web_search",
-    "getSyllabusOutline", "readLessonBlocks",
-    "listActivities", "readActivity",
+    "scrape_page",
+    "web_search",
+    "getSyllabusOutline",
+    "readLessonBlocks",
+    "draftGetSyllabusOutline",
+    "draftReadLessonBlocks",
+    "draftSnapshot",
+    "draftScoreLesson",
 }
 
 
