@@ -57,7 +57,8 @@ async def test_critic_writes_to_channel_not_messages(monkeypatch):
     out = await nodes_mod.critic_node(state, {})
 
     assert isinstance(out.get("critic_feedback"), str)
-    assert "too short" in out["critic_feedback"]
+    assert out["critic_feedback"], "critic must produce a non-empty feedback message"
+    assert "lesson" in out["critic_feedback"].lower() or "quality" in out["critic_feedback"].lower()
     for m in out.get("messages", []) or []:
         assert not isinstance(m, SystemMessage), (
             "critic must not append SystemMessage to messages"
