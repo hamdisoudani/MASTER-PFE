@@ -955,5 +955,5 @@ export const useSyllabusStore = create<SyllabusStore>()(
               }
             : { byThread };
         }),
-    })))
+    }))
 );
