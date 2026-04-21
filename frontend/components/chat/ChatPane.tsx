@@ -898,6 +898,98 @@ function visibleKey(m: AnyMsg, i: number): string {
   return (m.id as string) ?? `${m.type ?? m.role ?? "m"}-${i}`;
 }
 
+// ── Runtime validation for frontend tool-call arguments ──────────────────
+// The agent's OpenAI function schemas are strict, but MCP / non-strict tools
+// (or a stale deployment) can still emit calls whose args don't match the
+// declared shape. Rendering those blindly can crash React (e.g. calling
+// `.every` / `.map` on a non-array). We validate defensively in the browser,
+// and if the args are malformed we auto-resume the interrupt with a
+// descriptive error so the agent sees the failure and can re-emit the call
+// with correct arguments — instead of the UI hard-crashing with a cryptic
+// "d.every is not a function".
+function validateFrontendToolArgs(name: string, args: unknown): string | null {
+  const a = (args ?? {}) as any;
+  if (typeof a !== "object" || a === null || Array.isArray(a)) {
+    return `${name} args must be a JSON object, got ${Array.isArray(args) ? "array" : typeof args}`;
+  }
+  switch (name) {
+    case "askUser": {
+      if (!Array.isArray(a.questions)) {
+        return (
+          "askUser.questions must be an array of " +
+          "{id:string, prompt:string, choices?:string[], allow_custom?:boolean, multi?:boolean, placeholder?:string}, " +
+          `got ${a.questions === undefined ? "undefined" : typeof a.questions}`
+        );
+      }
+      if (a.questions.length === 0) {
+        return "askUser.questions must contain at least one question";
+      }
+      for (let i = 0; i < a.questions.length; i++) {
+        const q = a.questions[i];
+        if (!q || typeof q !== "object" || Array.isArray(q)) {
+          return `askUser.questions[${i}] must be an object`;
+        }
+        if (typeof q.id !== "string" || q.id.length === 0) {
+          return `askUser.questions[${i}].id must be a non-empty string`;
+        }
+        if (typeof q.prompt !== "string" || q.prompt.length === 0) {
+          return `askUser.questions[${i}].prompt must be a non-empty string`;
+        }
+        if (q.choices !== undefined && q.choices !== null) {
+          if (!Array.isArray(q.choices)) {
+            return `askUser.questions[${i}].choices must be an array of strings`;
+          }
+          for (let j = 0; j < q.choices.length; j++) {
+            if (typeof q.choices[j] !== "string") {
+              return `askUser.questions[${i}].choices[${j}] must be a string`;
+            }
+          }
+        }
+        if (q.multi !== undefined && q.multi !== null && typeof q.multi !== "boolean") {
+          return `askUser.questions[${i}].multi must be a boolean`;
+        }
+        if (q.allow_custom !== undefined && q.allow_custom !== null && typeof q.allow_custom !== "boolean") {
+          return `askUser.questions[${i}].allow_custom must be a boolean`;
+        }
+        if (q.placeholder !== undefined && q.placeholder !== null && typeof q.placeholder !== "string") {
+          return `askUser.questions[${i}].placeholder must be a string`;
+        }
+      }
+      return null;
+    }
+    case "setPlan": {
+      if (!Array.isArray(a.items)) {
+        return `setPlan.items must be an array of plan items, got ${a.items === undefined ? "undefined" : typeof a.items}`;
+      }
+      for (let i = 0; i < a.items.length; i++) {
+        const it = a.items[i];
+        if (!it || typeof it !== "object" || Array.isArray(it)) {
+          return `setPlan.items[${i}] must be an object`;
+        }
+        if (typeof it.title !== "string" || it.title.length === 0) {
+          return `setPlan.items[${i}].title must be a non-empty string`;
+        }
+        if (it.status !== undefined && it.status !== null && typeof it.status !== "string") {
+          return `setPlan.items[${i}].status must be a string ('pending' | 'in_progress' | 'done')`;
+        }
+      }
+      return null;
+    }
+    case "updatePlanItem": {
+      if (typeof a.id !== "string" || a.id.length === 0) {
+        return "updatePlanItem.id must be a non-empty string";
+      }
+      if (typeof a.status !== "string" || a.status.length === 0) {
+        return "updatePlanItem.status must be a non-empty string ('pending' | 'in_progress' | 'done')";
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+
 type FrontendToolCall = {
   type: "frontend_tool_call";
   tool_call_id: string;
@@ -981,7 +1073,21 @@ function AskUserCard({
   onSubmit: (answers: Record<string, string | string[]>) => void;
   onReject: () => void;
 }) {
-  const questions = ((call.args as any)?.questions ?? []) as AskUserQuestion[];
+  // Defensive: if the agent emitted malformed args (e.g. `questions` as a
+  // string, object, null, or missing entirely), fall back to an empty array
+  // so the component never crashes with `d.every is not a function`. The
+  // validation effect in ChatPaneBody will still auto-reject the tool call
+  // back to the agent with a descriptive error so it can retry.
+  const rawQuestions = (call.args as any)?.questions;
+  const questions: AskUserQuestion[] = Array.isArray(rawQuestions)
+    ? (rawQuestions.filter(
+        (q: any) =>
+          q &&
+          typeof q === "object" &&
+          typeof q.id === "string" &&
+          typeof q.prompt === "string",
+      ) as AskUserQuestion[])
+    : [];
   const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [customs, setCustoms] = useState<Record<string, string>>({});
 
@@ -1476,6 +1582,39 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
     [interruptValue, resumeWith]
   );
 
+  // Pre-flight validation: if the agent emitted a frontend_tool_call with
+  // malformed args, auto-resume with a descriptive error so it can retry
+  // instead of letting the UI render a crash (e.g. `.every is not a
+  // function` on a non-array `questions`). This runs BEFORE the auto-accept
+  // effect below so invalid calls never trigger the normal dispatch path.
+  useEffect(() => {
+    if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
+    if (handledIdsRef.current.has(interruptValue.tool_call_id)) return;
+    const err = validateFrontendToolArgs(interruptValue.name, interruptValue.args);
+    if (!err) return;
+    handledIdsRef.current.add(interruptValue.tool_call_id);
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[frontend-tool] invalid args for ${interruptValue.name}:`,
+      err,
+      interruptValue.args,
+    );
+    toast.error("Agent sent invalid tool arguments", {
+      description: `${interruptValue.name}: ${err}`,
+    });
+    resumeWith({
+      ok: false,
+      error: "invalid_arguments",
+      tool: interruptValue.name,
+      message: err,
+      hint:
+        "The arguments you sent do not match the declared JSON schema for this tool. " +
+        "Re-emit the tool call with arguments matching the schema exactly — in particular, " +
+        "fields declared as arrays must be JSON arrays (not strings or objects), and required " +
+        "string fields must be non-empty strings. Do not wrap structured args in a single text blob.",
+    });
+  }, [interruptValue, resumeWith]);
+
   // Read-only tools (outline/read-blocks) never need explicit approval — they
   // only query the editor state. Everything else respects the per-thread
   // auto-accept toggle.
@@ -1485,6 +1624,10 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
     if (!interruptValue || interruptValue.type !== "frontend_tool_call") return;
     if (handledIdsRef.current.has(interruptValue.tool_call_id)) return;
     if (resumeBusy) return;
+    // If args are invalid, the validation effect above will have already
+    // marked this interrupt as handled and resumed with an error — don't
+    // double-dispatch here.
+    if (validateFrontendToolArgs(interruptValue.name, interruptValue.args)) return;
     const isReadOnly = READ_ONLY_TOOL_NAMES.has(interruptValue.name);
     const isInteractive = INTERACTIVE_TOOL_NAMES.has(interruptValue.name);
     if (isInteractive) return;
