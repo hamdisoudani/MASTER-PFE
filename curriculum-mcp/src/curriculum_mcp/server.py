@@ -1,4 +1,13 @@
-"""FastMCP server entrypoint."""
+"""FastMCP server entrypoint.
+
+Deployed to Railway as `mcp-curriculum` (streamable-http on :8080, path /mcp).
+The agent connects via `langchain-mcp-adapters` (MultiServerMCPClient) which
+opens short-lived streamable-http transports per tool invocation. To keep that
+working across independent requests without a sticky mcp-session-id handshake,
+we run FastMCP in **stateless_http** mode — otherwise the server responds
+`421 Misdirected Request` whenever a POST arrives without a live session
+(which is what we were seeing in the Railway logs).
+"""
 from __future__ import annotations
 import os
 from dotenv import load_dotenv
@@ -7,7 +16,14 @@ from .tools import register
 
 load_dotenv()
 
-mcp = FastMCP("curriculum-mcp")
+# stateless_http=True  -> no per-session state; every POST is self-contained
+# json_response=True   -> respond with a single JSON body instead of SSE stream
+#                        (simpler for clients that don't hold the stream open)
+mcp = FastMCP(
+    "curriculum-mcp",
+    stateless_http=True,
+    json_response=True,
+)
 register(mcp)
 
 
