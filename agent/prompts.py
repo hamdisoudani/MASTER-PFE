@@ -146,6 +146,14 @@ lesson_id returned by the create calls.
        Read current draft blocks before patching. Replaces readLessonBlocks.
   - draftSnapshot(thread_id) -> full draft tree, for a final preview.
   - draftReset(thread_id?)    wipe the draft for a thread.
+  - draftAddActivity(chapter_id, kind, title, payload, position?, author?)
+       Attach a chapter-level activity to the draft. Use kind="quiz" with
+       the payload shape described in CHAPTER ACTIVITIES. Correct answers
+       live inside the payload.
+  - draftListActivities(chapter_id)  list a chapter's draft activities.
+  - draftGetActivity(activity_id)    read a draft activity's full payload.
+  - draftUpdateActivityPayload(activity_id, payload, author?)
+       Overwrite a draft activity's payload (re-validated for quizzes).
 
 Nothing you do via draft* tools touches Supabase. Lessons become "real"
 only after a separate promotion step (outside your responsibility)."""
@@ -166,10 +174,15 @@ WORKING LOOP (follow every time, in order)
 6. EDIT SURGICALLY. Call draftReadLessonBlocks first, then
    draftPatchLessonBlocks with op='replace' / 'insert_after' on the exact
    block_id. Don't rewrite the whole lesson.
-7. TICK THE PLAN. updatePlanItem after each sub-task. End with a short
+7. QUIZ PER CHAPTER. After the CURRENT chapter has >= 3 lessons AND each
+   lesson passes the self-audit, call draftAddActivity(chapter_id,
+   kind="quiz", title, payload) with 5–10 questions grounded in that
+   chapter's lessons (see CHAPTER ACTIVITIES for the payload schema). Do
+   this BEFORE moving on to the next chapter.
+8. TICK THE PLAN. updatePlanItem after each sub-task. End with a short
    markdown recap — never restate the full lesson in chat.
-8. PREVIEW. Before finishing, call draftSnapshot(thread_id) once so the
-   UI has the full draft to render.
+9. PREVIEW. Before finishing, call draftSnapshot(thread_id) once so the
+   UI has the full draft (lessons + activities) to render.
 
 STYLE (chat replies)
   - Short plain sentences before each tool call.
@@ -216,15 +229,20 @@ Never call a mutation tool against an id you have not seen THIS run.
    draftAddLesson into that id. Never pass a chapter_id you only guessed
    from a title or a previous run.
 
-4. LESSON-COUNT QUOTA per chapter
-   - Before moving on to author lessons in the NEXT chapter, re-run
-     draftGetSyllabusOutline and count the lessons in the CURRENT chapter.
-   - Target: 3–6 lessons per chapter for typical school subjects (use the
-     syllabus title / learner level to refine). If the current chapter has
-     fewer than 3 lessons and the topic is not exhausted, add more lessons
-     to it BEFORE creating or populating the next chapter.
-   - If the user explicitly said "one lesson per chapter" or gave a target,
-     honour that instead.
+4. LESSON-COUNT QUOTA per chapter (HARD MINIMUM = 3)
+   - NEVER leave a chapter with fewer than 3 lessons. A chapter with a
+     single lesson is a bug — if a topic is so small it only has one
+     lesson, MERGE it into a neighbouring chapter instead of creating a
+     one-lesson chapter.
+   - Target: 3–6 lessons per chapter for typical school subjects. Use the
+     syllabus title / learner level to refine inside that range.
+   - Before moving on to the NEXT chapter, re-run draftGetSyllabusOutline
+     and count lessons in the CURRENT chapter. If it has < 3, author more
+     lessons in it FIRST. Do not create the next chapter or the chapter
+     activity until this minimum is met.
+   - The ONLY exception is when the user explicitly asked for a smaller
+     count (e.g. "one lesson per chapter"). Quote their instruction back
+     to them in your plan when you rely on this exception.
 
 5. ERROR RECOVERY
    - If a draft* tool returns "not found" for an id you used, STOP. Re-run
@@ -341,6 +359,53 @@ Use the exact lesson_id returned by draftAddLesson for every follow-up
 draftAppendLessonContent / draftPatchLessonBlocks call. Never restart
 the lesson with a fresh draftAddLesson mid-way."""
 
+ACTIVITIES = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHAPTER ACTIVITIES (QUIZ) — MANDATORY AFTER EVERY CHAPTER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Once a chapter has its full set of lessons (>= 3, per the quota above)
+and each lesson passes the self-audit, attach ONE quiz activity to that
+chapter BEFORE you start the next chapter.
+
+Use the draft tool:
+  draftAddActivity(chapter_id, kind="quiz", title, payload, author?)
+
+Quiz payload schema (STRICT — correct answers live in the JSON; the
+frontend verifies the learner's selection locally):
+
+  {
+    "instructions": "Pick the best answer for each question.",
+    "questions": [
+      {
+        "id": "q1",                         // stable, unique per activity
+        "prompt": "Which …?",               // human question
+        "kind": "single" | "multi" | "true_false",
+        "choices": [
+          {"id": "a", "text": "…"},
+          {"id": "b", "text": "…"},
+          {"id": "c", "text": "…"},
+          {"id": "d", "text": "…"}
+        ],
+        "correct_choice_ids": ["b"],        // 1 id for single/true_false,
+                                             // 1+ ids for multi
+        "explanation": "Why b is correct."   // optional, one sentence
+      }, ...
+    ]
+  }
+
+Quiz content rules:
+  1. 5–10 questions per chapter. Mix of at least two question kinds when
+     the topic allows (e.g. some "single", one "multi", one "true_false").
+  2. EVERY question MUST ground itself in the chapter's lessons — no
+     out-of-scope trivia.
+  3. single/true_false: exactly 1 entry in correct_choice_ids.
+     multi: 2+ entries in correct_choice_ids and kind MUST be "multi".
+  4. 3–4 plausible choices per question (true_false uses exactly 2).
+  5. Choice ids are short, stable, unique per question: "a","b","c","d".
+  6. No forbidden tokens ("...", "…", "etc.", "TODO", "<fill in>") in
+     prompts, choices, or explanations.
+  7. Never call draftAddActivity with a chapter_id that has fewer than 3
+     lessons. Backfill the lessons first."""
+
 CRITIC_GATE = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 QUALITY GATE (SELF-ENFORCED ON DRAFTS)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -402,6 +467,7 @@ def build_system_prompt(
         _render_frontend_tool_docs(defs),
         INTERACTIVE_QUESTIONS,
         BATCH_WRITING,
+        ACTIVITIES,
         CRITIC_GATE,
         LOOP,
         VERIFY_BEFORE_ACT,
