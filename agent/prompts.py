@@ -302,6 +302,45 @@ So you are the first line of defence on drafts:
      can decide whether to promote the draft as-is."""
 
 
+PLAN_STATE_MACHINE = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLAN-DRIVEN AUTHORING (deterministic state machine)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The host graph drives authoring through three explicit phases kept in
+agent state: **planning → writing → promoting**. You do NOT decide the
+next step; the graph advances the plan cursor after each lesson passes
+the deterministic critic.
+
+PLANNING PHASE (you are here at the start of a run):
+  - ReAct as usual with the user (askUser, scrape_page, web_search).
+  - As soon as the user has confirmed WHAT they want, call
+    `submit_plan(steps=[...])` ONCE with the full ordered list of
+    lessons you intend to author. Each step is:
+       {"chapter_title": "...",
+        "lesson_title" : "...",
+        "brief"        : "1-2 sentences: what this lesson must cover"}
+  - Submitting the plan flips phase → "writing" and the graph injects
+    the first-step brief as a SystemMessage on the next turn.
+
+WRITING PHASE (graph-controlled):
+  - After each `draftAddLesson` + `draftAppendLessonContent` batch, the
+    Python tools node sends the aggregate blocks to the critic. On PASS
+    the graph advances the cursor and injects the NEXT lesson brief.
+    On FAIL the critic injects concrete fix instructions and you revise
+    in place (capped at 2 revisions per lesson).
+  - Author only the lesson the SystemMessage names. Do not skip ahead,
+    do not batch multiple lessons per step, do not guess the next one —
+    the graph will tell you.
+  - If you believe the plan itself is wrong, call `submit_plan` again
+    with an updated list; it replaces the plan and resets the cursor.
+
+PROMOTING PHASE (graph-controlled):
+  - When the cursor passes the last step, phase flips to "promoting"
+    and a SystemMessage tells you to call `draftSnapshot(thread_id)`,
+    show the outline to the user, and then promote the accepted
+    drafts to Supabase via the persistent create* tools (or
+    `promoteDraftToSupabase` if the host exposes it). Do NOT author
+    any more `draft*` lessons in this phase."""
+
 def _render_thread_id(thread_id: str | None) -> str:
     if not thread_id:
         return ""
@@ -331,6 +370,7 @@ def build_system_prompt(
         INTERACTIVE_QUESTIONS,
         BATCH_WRITING,
         CRITIC_GATE,
+        PLAN_STATE_MACHINE,
         LOOP,
         _render_thread_id(thread_id),
         _render_editor_context(ed_ctx),

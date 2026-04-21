@@ -51,6 +51,13 @@ LESSON_MUTATION_TOOLS = {
     "patchLessonBlocks",
 }
 
+DRAFT_LESSON_MUTATION_TOOLS = {
+    "draftAddLesson",
+    "draftUpdateLessonContent",
+    "draftAppendLessonContent",
+    "draftPatchLessonBlocks",
+}
+
 
 def _frontend_tool_defs(config: RunnableConfig) -> list[dict[str, Any]]:
     cfg = (config or {}).get("configurable", {}) or {}
@@ -275,7 +282,7 @@ async def critic_node(state: AgentState, config: RunnableConfig) -> dict[str, An
     if not lesson:
         return {}
 
-    if lesson.get("tool") == "patchLessonBlocks":
+    if lesson.get("tool") in ("patchLessonBlocks", "draftPatchLessonBlocks"):
         return {"last_authored_lesson": None}
 
     lesson_id = str(lesson.get("lesson_id") or "unknown")
@@ -287,13 +294,13 @@ async def critic_node(state: AgentState, config: RunnableConfig) -> dict[str, An
     # policy, so we only evaluate the full lesson on the latest append for
     # a given lessonId — earlier batches cache their blocks and skip.
     cache = dict(state.get("lesson_blocks_cache") or {})
-    if tool_name == "addLesson":
+    if tool_name in ("addLesson", "draftAddLesson"):
         cache[lesson_id] = list(batch_blocks)
         aggregated = cache[lesson_id]
-    elif tool_name == "appendLessonContent":
+    elif tool_name in ("appendLessonContent", "draftAppendLessonContent"):
         aggregated = list(cache.get(lesson_id) or []) + list(batch_blocks)
         cache[lesson_id] = aggregated
-    else:  # updateLessonContent is a full overwrite
+    else:  # updateLessonContent / draftUpdateLessonContent are full overwrites
         cache[lesson_id] = list(batch_blocks)
         aggregated = cache[lesson_id]
 
@@ -332,6 +339,192 @@ async def critic_node(state: AgentState, config: RunnableConfig) -> dict[str, An
 
     out["messages"] = [SystemMessage(content=format_feedback(lesson_id, report))]
     return out
+
+
+async def tools_post_hook(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    """Runs after the Python/MCP ToolNode.
+
+    Two jobs:
+      1. If the model just called ``submit_plan``, lift the plan from
+         the tool_call args into agent state and flip phase to "writing".
+      2. If the model just called any ``draft*`` lesson mutation, mirror
+         its payload into ``last_authored_lesson`` so ``critic_node``
+         can run the deterministic rubric — same signal the frontend
+         mutation path already produces.
+    """
+    messages = list(state.get("messages", []))
+    if not messages:
+        return {}
+    last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
+    if last_ai is None:
+        return {}
+
+    tool_msgs = []
+    for m in reversed(messages):
+        if isinstance(m, ToolMessage):
+            tool_msgs.append(m)
+        elif isinstance(m, AIMessage):
+            break
+    tool_msgs.reverse()
+    results_by_call_id = {tm.tool_call_id: tm for tm in tool_msgs}
+
+    update: dict[str, Any] = {}
+
+    for tc in (last_ai.tool_calls or []):
+        if tc.get("name") != "submit_plan":
+            continue
+        args = tc.get("args") or {}
+        steps = args.get("steps") or []
+        normalized = []
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            normalized.append({
+                "chapter_title": str(step.get("chapter_title") or "").strip(),
+                "lesson_title": str(step.get("lesson_title") or "").strip(),
+                "brief": str(step.get("brief") or "").strip(),
+                "status": "pending",
+                "attempts": 0,
+                "draft_lesson_id": None,
+            })
+        if normalized:
+            update["plan"] = normalized
+            update["plan_cursor"] = 0
+            update["phase"] = "writing"
+            logger.info("submit_plan registered: %d steps", len(normalized))
+        break
+
+    last_draft_mutation: dict[str, Any] | None = None
+    for tc in (last_ai.tool_calls or []):
+        name = tc.get("name")
+        if name not in DRAFT_LESSON_MUTATION_TOOLS:
+            continue
+        args = tc.get("args") or {}
+        blocks = args.get("blocks") if name != "draftPatchLessonBlocks" else args.get("patches")
+        blocks_list = blocks if isinstance(blocks, list) else []
+
+        lesson_id = args.get("lesson_id") or args.get("lessonId")
+        if not lesson_id and name == "draftAddLesson":
+            tm = results_by_call_id.get(tc.get("id"))
+            if tm is not None:
+                try:
+                    parsed = json.loads(tm.content) if isinstance(tm.content, str) else None
+                    if isinstance(parsed, dict):
+                        lesson_id = parsed.get("id") or parsed.get("lesson_id")
+                except Exception:
+                    lesson_id = None
+        lesson_id = lesson_id or f"new:{(args.get('title') or '').strip() or 'unknown'}"
+
+        last_draft_mutation = {
+            "lesson_id": str(lesson_id),
+            "tool": name,
+            "blocks": blocks_list,
+            "title": args.get("title"),
+        }
+
+    if last_draft_mutation is not None:
+        update["last_authored_lesson"] = last_draft_mutation
+
+    return update
+
+
+def route_after_python_tools(state: AgentState, config: RunnableConfig) -> str:
+    """After the python/MCP tools + post-hook: critic if a draft lesson
+    mutation happened, otherwise resume chat_node."""
+    if state.get("last_authored_lesson"):
+        return "critic_node"
+    return "chat_node"
+
+
+def _plan_summary(plan: list[dict[str, Any]], cursor: int) -> str:
+    if not plan:
+        return ""
+    lines = []
+    for i, step in enumerate(plan):
+        marker = "→" if i == cursor else " "
+        status = step.get("status") or "pending"
+        lines.append(f"  {marker} [{i+1}/{len(plan)}] ({status}) "
+                     f"{step.get('chapter_title','?')} :: {step.get('lesson_title','?')}")
+    return "\n".join(lines)
+
+
+def plan_router(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    """Deterministic plan advancement after the critic.
+
+    Runs only when the syllabus_agent is in the "writing" phase and has
+    a registered plan. Marks the current step's status based on the
+    latest critic report, advances the cursor, and injects a concise
+    SystemMessage telling the writer which lesson to author next — or
+    flipping to the "promoting" phase once every step has passed.
+    """
+    phase = state.get("phase") or "planning"
+    plan = state.get("plan") or []
+    if phase != "writing" or not plan:
+        return {}
+
+    cursor = int(state.get("plan_cursor") or 0)
+    cursor = max(0, min(cursor, len(plan) - 1))
+    plan = [dict(s) for s in plan]
+    current = plan[cursor]
+
+    reports = state.get("critic_reports") or {}
+    last = state.get("last_authored_lesson")
+    lesson_id = (last or {}).get("lesson_id")
+    report = reports.get(lesson_id) if lesson_id else None
+
+    attempts = int(state.get("revision_attempts", {}).get(lesson_id, 0) if lesson_id else 0)
+    current["attempts"] = attempts
+    if lesson_id and not str(lesson_id).startswith("new:"):
+        current["draft_lesson_id"] = lesson_id
+
+    if report and report.get("pass"):
+        current["status"] = "pass"
+        plan[cursor] = current
+        next_cursor = cursor + 1
+
+        if next_cursor >= len(plan):
+            nudge = SystemMessage(content=(
+                "PLAN COMPLETE. Every lesson in the plan passed the critic.\n"
+                "Phase → promoting. Now call draftSnapshot(thread_id) once to "
+                "show the user the full outline, ask for confirmation, and then "
+                "promote the accepted drafts to Supabase via the persistent "
+                "createLesson/createChapter tools (or promoteDraftToSupabase "
+                "if available). Do NOT author any more draft lessons.\n\n"
+                "Plan recap:\n" + _plan_summary(plan, next_cursor)
+            ))
+            return {
+                "plan": plan,
+                "plan_cursor": next_cursor,
+                "phase": "promoting",
+                "messages": [nudge],
+            }
+
+        nxt = plan[next_cursor]
+        nudge = SystemMessage(content=(
+            f"STEP {cursor+1}/{len(plan)} PASSED ✅. Advancing the plan cursor.\n"
+            f"Next step ({next_cursor+1}/{len(plan)}):\n"
+            f"  Chapter : {nxt.get('chapter_title','?')}\n"
+            f"  Lesson  : {nxt.get('lesson_title','?')}\n"
+            f"  Brief   : {nxt.get('brief') or '(no extra brief — follow the user request)'}\n\n"
+            "Author ONLY this lesson next. Use draftAddLesson under the right\n"
+            "chapter, then batch content with draftAppendLessonContent until\n"
+            "the critic passes. Do not jump ahead in the plan.\n\n"
+            "Plan status:\n" + _plan_summary(plan, next_cursor)
+        ))
+        return {
+            "plan": plan,
+            "plan_cursor": next_cursor,
+            "messages": [nudge],
+        }
+
+    if state.get("stop_reason") == "quality_gate_exhausted":
+        current["status"] = "failed"
+        plan[cursor] = current
+        return {"plan": plan}
+
+    current["status"] = "writing"
+    plan[cursor] = current
+    return {"plan": plan}
 
 
 def route_after_chat(state: AgentState, config: RunnableConfig) -> str:

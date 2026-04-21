@@ -32,3 +32,15 @@ class AgentState(TypedDict, total=False):
     # Context-window meter: {tokens, budget, fraction} updated each chat_node
     # call so the UI can render an agent context-usage gauge.
     context_usage: Optional[dict[str, Any]]
+    # Deterministic plan state machine for syllabus_agent.
+    # `plan` is the ordered list of lessons the writer must author, each
+    # with {chapter_title, lesson_title, brief, status, attempts,
+    # draft_lesson_id}. `plan_cursor` is the index of the step currently
+    # being worked on. `phase` is "planning" (ReAct with the user to
+    # build a plan), "writing" (strict plan-driven authoring loop), or
+    # "promoting" (copy the accepted drafts to Supabase via the
+    # frontend mutation tools). The graph uses these fields to route
+    # after the critic, instead of relying on the LLM to choose nodes.
+    plan: Optional[list[dict[str, Any]]]
+    plan_cursor: Optional[int]
+    phase: Optional[str]
