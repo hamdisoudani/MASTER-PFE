@@ -7,6 +7,7 @@ import {
   Chapter,
   Lesson,
 } from "@/store/syllabusStore";
+import { useChapterLessons } from "@/hooks/useChapterLessons";
 import {
   BookOpen,
   ChevronDown,
@@ -206,6 +207,7 @@ function ChapterNode({
   onCancelDelete,
 }: ChapterNodeProps) {
   const isConfirming = confirmDelete === chapter.id;
+  useChapterLessons(chapter.id, chapter.isExpanded);
   return (
     <div>
       <div

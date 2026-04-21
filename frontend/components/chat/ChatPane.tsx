@@ -4,6 +4,7 @@ import { useQueryState } from "nuqs";
 import { toast } from "sonner";
 import { useSyllabusAgent } from "@/lib/useSyllabusAgent";
 import { useSyllabusStore } from "@/store/syllabusStore";
+import { useSyllabusRealtime } from "@/hooks/useSyllabusRealtime";
 import { useThreadStore } from "@/stores/thread-store";
 import { useThreadSettingsStore } from "@/stores/thread-settings-store";
 import { useThreads, threadVariant } from "@/providers/Thread";
@@ -1111,6 +1112,10 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
   useEffect(() => {
     setCurrentSyllabusThread(threadId ?? null);
   }, [threadId, setCurrentSyllabusThread]);
+
+  // Subscribe to realtime updates for the currently open thread so the
+  // user sees the agent's writes as they happen (PR4).
+  useSyllabusRealtime(threadId ?? null);
 
   const setCurrentPlanThread = usePlanStore((s) => s.setCurrentThread);
   useEffect(() => {

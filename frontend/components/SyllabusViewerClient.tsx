@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { FolderTree, MessageSquare, NotebookPen, ListTree } from "lucide-react";
 import { useSyllabusStore } from "@/store/syllabusStore";
+import { useLessonBlocks } from "@/hooks/useLessonBlocks";
+import { ActiveThreadsRealtime } from "@/hooks/useActiveThreadsRealtime";
 import { FileTree } from "@/components/FileTree";
 import { BlockNoteEditor, EmptyEditorState } from "@/components/BlockNoteEditor";
 import { ChatPane } from "@/components/chat/ChatPane";
@@ -35,18 +37,27 @@ function useIsDesktop() {
 export default function SyllabusViewerClient() {
   const { getActiveLesson } = useSyllabusStore();
   const activeLesson = getActiveLesson();
+  // Lazy-fetch the active lesson's blocks on first view. Cached via the
+  // `blocksLoaded` flag in the store and cleared only on full page reload.
+  useLessonBlocks(activeLesson?.id ?? null);
   const isDesktop = useIsDesktop();
   const [tab, setTab] = useState<MobileTab>("chat");
 
   const editorPane = activeLesson ? (
-    <BlockNoteEditor key={activeLesson.id} lessonId={activeLesson.id} initialContent={activeLesson.content} />
+    <BlockNoteEditor
+      key={`${activeLesson.id}:${activeLesson.version ?? 0}`}
+      lessonId={activeLesson.id}
+      initialContent={activeLesson.content}
+    />
   ) : (
     <EmptyEditorState />
   );
 
+  const realtimeBoot = <ActiveThreadsRealtime limit={5} />;
+
   if (isDesktop) {
     return (
-      <SidebarProvider
+      <>{realtimeBoot}<SidebarProvider
         style={{ "--sidebar-width": "16rem", "--header-height": "3rem" } as React.CSSProperties}
       >
         <AppSidebar />
@@ -66,12 +77,12 @@ export default function SyllabusViewerClient() {
             </PanelGroup>
           </div>
         </SidebarInset>
-      </SidebarProvider>
+      </SidebarProvider></>
     );
   }
 
   return (
-    <div className="flex h-full w-full flex-col bg-background text-foreground">
+    <>{realtimeBoot}<div className="flex h-full w-full flex-col bg-background text-foreground">
       <div className="flex-1 min-h-0 relative">
         <div className={`absolute inset-0 ${tab === "threads" ? "block" : "hidden"}`}><ThreadHistory /></div>
         <div className={`absolute inset-0 ${tab === "files" ? "block" : "hidden"}`}><FileTree /></div>
@@ -99,6 +110,6 @@ export default function SyllabusViewerClient() {
           );
         })}
       </nav>
-    </div>
+    </div></>
   );
 }

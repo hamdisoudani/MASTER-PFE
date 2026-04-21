@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 
 export interface InlineContent {
   type: 'text';
@@ -19,6 +18,15 @@ export interface Lesson {
   id: string;
   title: string;
   content: Block[];
+  position?: number;
+  /** Server version (from Supabase `lessons.version`). Bumped by trigger on every mutation. */
+  version?: number;
+  /** Block count from the server (used in the file tree until blocks are fetched). */
+  blockCount?: number;
+  /** True once the full `blocks` array has been fetched from Supabase. */
+  blocksLoaded?: boolean;
+  /** Who last wrote: 'writer' | 'reviser' | 'user'. */
+  lastAuthor?: string | null;
 }
 
 export interface Chapter {
@@ -28,6 +36,7 @@ export interface Chapter {
   description?: string;
   lessons: Lesson[];
   isExpanded: boolean;
+  position?: number;
 }
 
 export interface Syllabus {
@@ -168,6 +177,39 @@ interface SyllabusStore extends ThreadSyllabusSlice {
     end?: number;
     blocks?: Array<{ index: number; id: string; type: string; text: string }>;
   };
+
+  // -------- Remote sync actions (PR4) --------
+  applyRemoteSyllabus: (row: {
+    id: string;
+    thread_id: string;
+    title: string;
+    description?: string | null;
+  }) => void;
+  removeSyllabusById: (syllabusId: string) => void;
+  applyRemoteChapter: (row: {
+    id: string;
+    syllabus_id: string;
+    title: string;
+    summary?: string | null;
+    position: number;
+  }) => void;
+  removeChapterById: (chapterId: string) => void;
+  applyRemoteLessonMeta: (row: {
+    id: string;
+    chapter_id: string;
+    title: string;
+    position: number;
+    block_count?: number;
+    version?: number;
+    last_author?: string | null;
+  }) => void;
+  applyRemoteLessonBlocks: (
+    lessonId: string,
+    blocks: Block[],
+    version?: number
+  ) => void;
+  removeLessonById: (lessonId: string) => void;
+  clearThreadSlice: (threadId: string) => void;
 }
 
 /** Resolve the bucket key for the slice currently bound to the UI. */
@@ -205,8 +247,7 @@ function updateSlice(
  * remain here only as a reference and a local-fallback for offline demos.
  */
 export const useSyllabusStore = create<SyllabusStore>()(
-  persist(
-    (set, get) => ({
+    ((set, get) => ({
       byThread: {},
       currentThreadId: null,
       syllabi: [],
@@ -612,32 +653,307 @@ export const useSyllabusStore = create<SyllabusStore>()(
         const { syllabi, activeSyllabusId } = get();
         return syllabi.find((s) => s.id === activeSyllabusId) ?? null;
       },
-    }),
-    {
-      name: 'syllabus-store',
-      version: 2,
-      /**
-       * v1 persisted a single flat `{ syllabi, activeSyllabusId, ... }` blob.
-       * v2 partitions by thread under `byThread`. Migrate legacy blobs into
-       * the `__default__` bucket so pre-thread data stays accessible whenever
-       * no threadId is selected.
-       */
-      migrate: (persisted: any, version) => {
-        if (!persisted) return persisted;
-        if (version >= 2 && persisted.byThread) return persisted;
-        const legacySlice: ThreadSyllabusSlice = {
-          syllabi: persisted.syllabi ?? [],
-          activeSyllabusId: persisted.activeSyllabusId ?? null,
-          activeItemId: persisted.activeItemId ?? null,
-          renderErrors: persisted.renderErrors ?? {},
-          lastMutation: persisted.lastMutation ?? {},
-        };
-        return {
-          byThread: { [DEFAULT_BUCKET]: legacySlice },
-          currentThreadId: null,
-          ...legacySlice,
-        };
-      },
-    }
-  )
+
+      // ========================================================================
+      // Remote-sync actions (PR4). These mirror Supabase rows into the store and
+      // NEVER go back to the MCP server. They are invoked by the realtime
+      // subscription and on-demand fetch helpers.
+      // ========================================================================
+
+      applyRemoteSyllabus: (row: {
+        id: string;
+        thread_id: string;
+        title: string;
+        description?: string | null;
+      }) =>
+        set((state) => {
+          const targetKey = row.thread_id;
+          const slice = state.byThread[targetKey] ?? emptySlice();
+          const existing = slice.syllabi.find((s) => s.id === row.id);
+          const next: Syllabus = existing
+            ? {
+                ...existing,
+                title: row.title,
+                description: row.description ?? undefined,
+              }
+            : {
+                id: row.id,
+                title: row.title,
+                subject: '',
+                description: row.description ?? undefined,
+                chapters: [],
+                createdAt: new Date().toISOString(),
+              };
+          const syllabi = existing
+            ? slice.syllabi.map((s) => (s.id === row.id ? next : s))
+            : [...slice.syllabi, next];
+          const nextSlice: ThreadSyllabusSlice = {
+            ...slice,
+            syllabi,
+            activeSyllabusId: slice.activeSyllabusId ?? row.id,
+          };
+          const byThread = { ...state.byThread, [targetKey]: nextSlice };
+          const mirror = targetKey === keyOf(state)
+            ? {
+                syllabi: nextSlice.syllabi,
+                activeSyllabusId: nextSlice.activeSyllabusId,
+                activeItemId: nextSlice.activeItemId,
+                renderErrors: nextSlice.renderErrors,
+                lastMutation: nextSlice.lastMutation,
+              }
+            : {};
+          return { byThread, ...mirror };
+        }),
+
+      removeSyllabusById: (syllabusId: string) =>
+        set((state) => {
+          const byThread = { ...state.byThread };
+          let activeChanged: ThreadSyllabusSlice | null = null;
+          for (const [k, slice] of Object.entries(state.byThread)) {
+            if (!slice.syllabi.some((s) => s.id === syllabusId)) continue;
+            const syllabi = slice.syllabi.filter((s) => s.id !== syllabusId);
+            const nextSlice: ThreadSyllabusSlice = {
+              ...slice,
+              syllabi,
+              activeSyllabusId:
+                slice.activeSyllabusId === syllabusId
+                  ? (syllabi[0]?.id ?? null)
+                  : slice.activeSyllabusId,
+            };
+            byThread[k] = nextSlice;
+            if (k === keyOf(state)) activeChanged = nextSlice;
+          }
+          if (!activeChanged) return { byThread };
+          return {
+            byThread,
+            syllabi: activeChanged.syllabi,
+            activeSyllabusId: activeChanged.activeSyllabusId,
+            activeItemId: activeChanged.activeItemId,
+            renderErrors: activeChanged.renderErrors,
+            lastMutation: activeChanged.lastMutation,
+          };
+        }),
+
+      applyRemoteChapter: (row: {
+        id: string;
+        syllabus_id: string;
+        title: string;
+        summary?: string | null;
+        position: number;
+      }) =>
+        set((state) => {
+          const byThread = { ...state.byThread };
+          let mirror: ThreadSyllabusSlice | null = null;
+          for (const [k, slice] of Object.entries(state.byThread)) {
+            if (!slice.syllabi.some((s) => s.id === row.syllabus_id)) continue;
+            const syllabi = slice.syllabi.map((syl) => {
+              if (syl.id !== row.syllabus_id) return syl;
+              const existing = syl.chapters.find((c) => c.id === row.id);
+              const nextCh: Chapter = existing
+                ? {
+                    ...existing,
+                    title: row.title,
+                    description: row.summary ?? undefined,
+                  }
+                : {
+                    id: row.id,
+                    syllabusId: row.syllabus_id,
+                    title: row.title,
+                    description: row.summary ?? undefined,
+                    lessons: [],
+                    isExpanded: false,
+                    position: row.position,
+                  };
+              const chapters = existing
+                ? syl.chapters.map((c) => (c.id === row.id ? { ...nextCh, position: row.position } : c))
+                : [...syl.chapters, nextCh].sort(
+                    (a, b) => (a.position ?? 0) - (b.position ?? 0)
+                  );
+              return { ...syl, chapters };
+            });
+            const nextSlice: ThreadSyllabusSlice = { ...slice, syllabi };
+            byThread[k] = nextSlice;
+            if (k === keyOf(state)) mirror = nextSlice;
+          }
+          if (!mirror) return { byThread };
+          return { byThread, syllabi: mirror.syllabi };
+        }),
+
+      removeChapterById: (chapterId: string) =>
+        set((state) => {
+          const byThread = { ...state.byThread };
+          let mirror: ThreadSyllabusSlice | null = null;
+          for (const [k, slice] of Object.entries(state.byThread)) {
+            const touched = slice.syllabi.some((s) =>
+              s.chapters.some((c) => c.id === chapterId)
+            );
+            if (!touched) continue;
+            const lessonIds = new Set<string>();
+            const syllabi = slice.syllabi.map((syl) => ({
+              ...syl,
+              chapters: syl.chapters.filter((c) => {
+                if (c.id !== chapterId) return true;
+                c.lessons.forEach((l) => lessonIds.add(l.id));
+                return false;
+              }),
+            }));
+            const nextSlice: ThreadSyllabusSlice = {
+              ...slice,
+              syllabi,
+              activeItemId:
+                slice.activeItemId && lessonIds.has(slice.activeItemId)
+                  ? null
+                  : slice.activeItemId,
+            };
+            byThread[k] = nextSlice;
+            if (k === keyOf(state)) mirror = nextSlice;
+          }
+          if (!mirror) return { byThread };
+          return {
+            byThread,
+            syllabi: mirror.syllabi,
+            activeItemId: mirror.activeItemId,
+          };
+        }),
+
+      applyRemoteLessonMeta: (row: {
+        id: string;
+        chapter_id: string;
+        title: string;
+        position: number;
+        block_count?: number;
+        version?: number;
+        last_author?: string | null;
+      }) =>
+        set((state) => {
+          const byThread = { ...state.byThread };
+          let mirror: ThreadSyllabusSlice | null = null;
+          for (const [k, slice] of Object.entries(state.byThread)) {
+            const touched = slice.syllabi.some((s) =>
+              s.chapters.some((c) => c.id === row.chapter_id)
+            );
+            if (!touched) continue;
+            const syllabi = slice.syllabi.map((syl) => ({
+              ...syl,
+              chapters: syl.chapters.map((ch) => {
+                if (ch.id !== row.chapter_id) return ch;
+                const existing = ch.lessons.find((l) => l.id === row.id);
+                const nextLesson: Lesson = existing
+                  ? {
+                      ...existing,
+                      title: row.title,
+                      version: row.version ?? existing.version,
+                      blockCount: row.block_count ?? existing.blockCount,
+                      lastAuthor: row.last_author ?? existing.lastAuthor,
+                    }
+                  : {
+                      id: row.id,
+                      title: row.title,
+                      content: [],
+                      version: row.version,
+                      blockCount: row.block_count ?? 0,
+                      blocksLoaded: false,
+                      lastAuthor: row.last_author ?? null,
+                    };
+                const lessons = existing
+                  ? ch.lessons.map((l) => (l.id === row.id ? { ...nextLesson, position: row.position } : l))
+                  : [...ch.lessons, nextLesson].sort(
+                      (a, b) => (a.position ?? 0) - (b.position ?? 0)
+                    );
+                return { ...ch, lessons };
+              }),
+            }));
+            const nextSlice: ThreadSyllabusSlice = { ...slice, syllabi };
+            byThread[k] = nextSlice;
+            if (k === keyOf(state)) mirror = nextSlice;
+          }
+          if (!mirror) return { byThread };
+          return { byThread, syllabi: mirror.syllabi };
+        }),
+
+      applyRemoteLessonBlocks: (lessonId: string, blocks: Block[], version?: number) =>
+        set((state) => {
+          const byThread = { ...state.byThread };
+          let mirror: ThreadSyllabusSlice | null = null;
+          for (const [k, slice] of Object.entries(state.byThread)) {
+            let touched = false;
+            const syllabi = slice.syllabi.map((syl) => ({
+              ...syl,
+              chapters: syl.chapters.map((ch) => ({
+                ...ch,
+                lessons: ch.lessons.map((l) => {
+                  if (l.id !== lessonId) return l;
+                  touched = true;
+                  return {
+                    ...l,
+                    content: toBlockArray(blocks),
+                    version: version ?? l.version,
+                    blockCount: Array.isArray(blocks) ? blocks.length : l.blockCount,
+                    blocksLoaded: true,
+                  };
+                }),
+              })),
+            }));
+            if (!touched) continue;
+            const nextSlice: ThreadSyllabusSlice = { ...slice, syllabi };
+            byThread[k] = nextSlice;
+            if (k === keyOf(state)) mirror = nextSlice;
+          }
+          if (!mirror) return { byThread };
+          return { byThread, syllabi: mirror.syllabi };
+        }),
+
+      removeLessonById: (lessonId: string) =>
+        set((state) => {
+          const byThread = { ...state.byThread };
+          let mirror: ThreadSyllabusSlice | null = null;
+          for (const [k, slice] of Object.entries(state.byThread)) {
+            let touched = false;
+            const syllabi = slice.syllabi.map((syl) => ({
+              ...syl,
+              chapters: syl.chapters.map((ch) => {
+                const next = ch.lessons.filter((l) => {
+                  if (l.id === lessonId) {
+                    touched = true;
+                    return false;
+                  }
+                  return true;
+                });
+                return { ...ch, lessons: next };
+              }),
+            }));
+            if (!touched) continue;
+            const nextSlice: ThreadSyllabusSlice = {
+              ...slice,
+              syllabi,
+              activeItemId: slice.activeItemId === lessonId ? null : slice.activeItemId,
+            };
+            byThread[k] = nextSlice;
+            if (k === keyOf(state)) mirror = nextSlice;
+          }
+          if (!mirror) return { byThread };
+          return {
+            byThread,
+            syllabi: mirror.syllabi,
+            activeItemId: mirror.activeItemId,
+          };
+        }),
+
+      clearThreadSlice: (threadId: string) =>
+        set((state) => {
+          const key = threadId ?? DEFAULT_BUCKET;
+          const byThread = { ...state.byThread, [key]: emptySlice() };
+          const isActive = key === keyOf(state);
+          return isActive
+            ? {
+                byThread,
+                syllabi: [],
+                activeSyllabusId: null,
+                activeItemId: null,
+                renderErrors: {},
+                lastMutation: {},
+              }
+            : { byThread };
+        }),
+    })))
 );
