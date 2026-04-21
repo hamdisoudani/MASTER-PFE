@@ -25,7 +25,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-CURRICULUM_TOOL_NAMES = {
+CURRICULUM_PERSISTENT_TOOL_NAMES = {
     "getOrCreateSyllabus",
     "getSyllabusOutline",
     "listChapters",
@@ -37,6 +37,24 @@ CURRICULUM_TOOL_NAMES = {
     "appendLessonContent",
     "patchLessonBlocks",
 }
+
+CURRICULUM_DRAFT_TOOL_NAMES = {
+    "draftGetOrCreateSyllabus",
+    "draftGetSyllabusOutline",
+    "draftListChapters",
+    "draftAddChapter",
+    "draftListLessons",
+    "draftReadLessonBlocks",
+    "draftAddLesson",
+    "draftUpdateLessonContent",
+    "draftAppendLessonContent",
+    "draftPatchLessonBlocks",
+    "draftSnapshot",
+    "draftReset",
+}
+
+# Back-compat: old code paths import this union.
+CURRICULUM_TOOL_NAMES = CURRICULUM_PERSISTENT_TOOL_NAMES | CURRICULUM_DRAFT_TOOL_NAMES
 
 
 async def _aload_curriculum_tools() -> list[Any]:
@@ -76,18 +94,32 @@ async def _aload_curriculum_tools() -> list[Any]:
     return loaded
 
 
-def load_curriculum_tools() -> list[Any]:
-    """Sync wrapper for graph build. Safe to call from module import."""
+def _filter_by_mode(tools: list[Any], mode: str) -> list[Any]:
+    if mode == "draft":
+        return [t for t in tools if getattr(t, "name", None) in CURRICULUM_DRAFT_TOOL_NAMES]
+    if mode == "persistent":
+        return [t for t in tools if getattr(t, "name", None) in CURRICULUM_PERSISTENT_TOOL_NAMES]
+    return list(tools)
+
+
+def load_curriculum_tools(mode: str = "all") -> list[Any]:
+    """Sync wrapper for graph build. Safe to call from module import.
+
+    mode:
+      - "all"         -> persistent + draft (default, back-compat)
+      - "draft"       -> only in-memory draft tools (normal syllabus agent, deep supervisor)
+      - "persistent"  -> only Supabase-backed tools (writer, summarizer subagents)
+    """
     try:
-        return asyncio.run(_aload_curriculum_tools())
+        tools = asyncio.run(_aload_curriculum_tools())
     except RuntimeError:
-        # already inside an event loop (e.g. langgraph dev hot-reload)
         try:
             loop = asyncio.new_event_loop()
             try:
-                return loop.run_until_complete(_aload_curriculum_tools())
+                tools = loop.run_until_complete(_aload_curriculum_tools())
             finally:
                 loop.close()
         except Exception as e:  # noqa: BLE001
             logger.warning("curriculum-mcp load fallback failed: %s", e)
             return []
+    return _filter_by_mode(tools, mode)
