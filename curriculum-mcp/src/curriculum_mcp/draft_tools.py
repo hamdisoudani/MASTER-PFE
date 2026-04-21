@@ -95,3 +95,34 @@ def register(mcp: FastMCP) -> None:
             **report,
         }
 
+    @mcp.tool()
+    def draftAddActivity(chapter_id: str, kind: str, title: str, payload: dict,
+                         position: Optional[int] = None,
+                         author: Optional[str] = None) -> dict:
+        """Attach a chapter-level activity (e.g. kind='quiz') to the in-memory
+        draft. For kind='quiz' the payload must be:
+          {"questions": [
+             {"id": str, "prompt": str, "kind": "single"|"multi"|"true_false",
+              "choices": [{"id": str, "text": str}, ...],
+              "correct_choice_ids": [str, ...], "explanation": str?}, ...
+          ], "instructions": str?}
+        Correct answers live in the payload — frontend verification compares
+        the learner's selection to correct_choice_ids.
+        """
+        return draft_store.add_activity(chapter_id, kind, title, payload, position, author)
+
+    @mcp.tool()
+    def draftListActivities(chapter_id: str) -> list[dict]:
+        """Return all activities attached to a draft chapter (full payloads)."""
+        return draft_store.list_activities(chapter_id)
+
+    @mcp.tool()
+    def draftGetActivity(activity_id: str) -> dict:
+        """Return a single draft activity by id (full payload incl. answers)."""
+        return draft_store.get_activity(activity_id)
+
+    @mcp.tool()
+    def draftUpdateActivityPayload(activity_id: str, payload: dict,
+                                   author: Optional[str] = None) -> dict:
+        """Overwrite a draft activity's payload (re-validated for quizzes)."""
+        return draft_store.update_activity_payload(activity_id, payload, author)
