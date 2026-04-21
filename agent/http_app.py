@@ -4,28 +4,29 @@ Registered via langgraph.json:
 
     "http": { "app": "./agent/http_app.py:app" }
 
-Routes (all served at the deployment root, e.g. https://<svc>.railway.app):
+Uses Starlette (ships with langgraph_api - no extra deps needed). The
+docs at https://docs.langchain.com/langsmith/custom-routes explicitly
+support Starlette on the Python side.
 
+Routes:
+    GET /graphs/healthz             liveness probe (no graph imports)
     GET /graphs                     JSON index
-    GET /graphs/{name}.png          PNG render (mermaid.ink fallback pygraphviz)
+    GET /graphs/{name}.png          PNG render (mermaid.ink then pygraphviz)
     GET /graphs/{name}.mmd          raw mermaid source
-    GET /graphs/healthz             liveness probe
 
-Graphs are imported lazily inside each handler so an import/compile failure
-in one graph does not prevent the routes from registering at startup
-(which is what caused the previous 404s on Railway).
+Graphs are imported lazily inside handlers so an import/compile failure
+in one graph does not prevent the routes from registering.
 """
 from __future__ import annotations
 
 import logging
 from typing import Callable
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.routing import Route
 
 logger = logging.getLogger(__name__)
-
-app = FastAPI(title="MASTER-PFE custom routes")
 
 GRAPH_NAMES = ("syllabus_agent", "syllabus_agent_deep")
 
@@ -67,27 +68,27 @@ def _render_mermaid(compiled) -> str | None:
         return None
 
 
-@app.get("/graphs/healthz")
-async def healthz():
-    return {"ok": True, "graphs": list(GRAPH_NAMES)}
+async def healthz(request):
+    return JSONResponse({"ok": True, "graphs": list(GRAPH_NAMES)})
 
 
-@app.get("/graphs")
-async def list_graphs():
-    return {
-        "graphs": [
-            {
-                "name": name,
-                "png": f"/graphs/{name}.png",
-                "mermaid": f"/graphs/{name}.mmd",
-            }
-            for name in GRAPH_NAMES
-        ]
-    }
+async def list_graphs(request):
+    return JSONResponse(
+        {
+            "graphs": [
+                {
+                    "name": name,
+                    "png": f"/graphs/{name}.png",
+                    "mermaid": f"/graphs/{name}.mmd",
+                }
+                for name in GRAPH_NAMES
+            ]
+        }
+    )
 
 
-@app.get("/graphs/{name}.png")
-async def graph_png(name: str):
+async def graph_png(request):
+    name = request.path_params["name"]
     try:
         compiled = _load_graph(name)
     except Exception as exc:
@@ -112,8 +113,8 @@ async def graph_png(name: str):
     return Response(png, media_type="image/png")
 
 
-@app.get("/graphs/{name}.mmd")
-async def graph_mmd(name: str):
+async def graph_mmd(request):
+    name = request.path_params["name"]
     try:
         compiled = _load_graph(name)
     except Exception as exc:
@@ -131,3 +132,20 @@ async def graph_mmd(name: str):
     if mmd is None:
         return JSONResponse({"error": "mermaid rendering failed"}, status_code=500)
     return PlainTextResponse(mmd, media_type="text/plain")
+
+
+logger.warning("MASTER-PFE custom routes module imported; registering /graphs/* routes")
+
+app = Starlette(
+    debug=False,
+    routes=[
+        Route("/graphs/healthz", healthz, methods=["GET"]),
+        Route("/graphs", list_graphs, methods=["GET"]),
+        Route("/graphs/{name}.png", graph_png, methods=["GET"]),
+        Route("/graphs/{name}.mmd", graph_mmd, methods=["GET"]),
+    ],
+)
+
+logger.warning(
+    "MASTER-PFE custom routes ready: /graphs, /graphs/healthz, /graphs/{name}.png, /graphs/{name}.mmd"
+)
