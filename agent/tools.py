@@ -1,7 +1,15 @@
 from __future__ import annotations
+import asyncio
+import os
 from langchain_core.tools import tool
 from agent.search import serper_search, jina_scrape
 from agent.mcp_client import load_curriculum_tools
+
+# Hard upper bound on scrape_page latency. Jina's httpx client already has a 25s
+# socket timeout, but Jina's reader can queue or stall under load and still
+# block the subagent. Wrap the call in a wall-clock timeout so the graph never
+# hangs on a single scrape.
+SCRAPE_PAGE_TIMEOUT_SECONDS = float(os.environ.get('SCRAPE_PAGE_TIMEOUT_SECONDS', '30'))
 
 @tool
 async def web_search(query: str) -> str:
@@ -18,7 +26,13 @@ async def web_search(query: str) -> str:
 @tool
 async def scrape_page(url: str) -> str:
     """Fetch a web page and return its readable content as markdown."""
-    result = await jina_scrape(url)
+    try:
+        result = await asyncio.wait_for(jina_scrape(url), timeout=SCRAPE_PAGE_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        return (f"Failed to scrape {url}: timed out after "
+                f"{SCRAPE_PAGE_TIMEOUT_SECONDS:.0f}s. Try a different source or web_search.")
+    except Exception as e:  # noqa: BLE001 — any transport failure must not crash the subagent
+        return f"Failed to scrape {url}: {type(e).__name__}: {e}"
     if result.get("success"):
         return f"# {result.get('title','')}\n\n{result.get('markdown','')}"
     return f"Failed to scrape {url}: {result.get('error','unknown error')}"
