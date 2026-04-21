@@ -24,6 +24,7 @@ import logging
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import SummarizationMiddleware, TodoListMiddleware
+from langchain.agents.middleware.types import AgentMiddleware
 from deepagents.middleware.subagents import (
     CompiledSubAgent,
     SubAgentMiddleware,
@@ -32,6 +33,8 @@ from deepagents.middleware.subagents import (
 from agent.checkpointer import get_checkpointer
 from agent.frontend_shells import askUser
 from agent.llm import get_llm
+from agent.middleware import estimate_context_usage
+from agent.state import AgentState
 from agent.tools import web_search, scrape_page, load_curriculum_tools
 
 # (PR4) addLesson / updateLessonContent / appendLessonContent / patchLessonBlocks
@@ -227,6 +230,39 @@ and stop."""
 import os as _os
 
 
+
+
+# ---------------------------------------------------------------------------
+# ContextUsageMiddleware
+# ---------------------------------------------------------------------------
+# The classic (non-deep) chat_node writes {tokens, budget, fraction} into the
+# `context_usage` state key on every model call so SiteHeader /
+# AgentActivityPanel can render the context-window meter. The deep graph uses
+# langchain.agents.create_agent which has no such hook, so we inject one via a
+# tiny middleware: on every `before_model` we re-estimate usage from the
+# current messages list and write it back into state. Declaring
+# `state_schema = AgentState` ensures create_agent merges `context_usage` into
+# the final graph state schema and `stream.values.context_usage` surfaces it.
+CONTEXT_TOKEN_BUDGET = int(_os.getenv("AGENT_CONTEXT_TOKEN_BUDGET", "128000"))
+
+
+class ContextUsageMiddleware(AgentMiddleware):
+    """Publish `context_usage` into state so the UI meter works in deep mode."""
+
+    state_schema = AgentState
+
+    def __init__(self, budget: int = CONTEXT_TOKEN_BUDGET) -> None:
+        super().__init__()
+        self._budget = budget
+
+    def before_model(self, state, runtime=None):  # noqa: ARG002
+        msgs = state.get("messages", []) or []
+        return {"context_usage": estimate_context_usage(msgs, self._budget)}
+
+    async def abefore_model(self, state, runtime=None):  # noqa: ARG002
+        return self.before_model(state)
+
+
 def _make_summarizer() -> SummarizationMiddleware:
     """Long-running conversation summarizer.
 
@@ -300,6 +336,7 @@ def build_graph():
         system_prompt=SUPERVISOR_PROMPT,
         tools=[askUser],
         middleware=[
+            ContextUsageMiddleware(),
             TodoListMiddleware(),
             _make_summarizer(),
             SubAgentMiddleware(

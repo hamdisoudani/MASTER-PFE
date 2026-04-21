@@ -807,21 +807,49 @@ const ToolCallTimeline = memo(function ToolCallTimeline({
  * entries drop out of the thread naturally.
  */
 function subagentOrigin(m: AnyMsg): string | null {
+  // Detect that a streamed message originated inside a nested subgraph
+  // (i.e. a deepagents `task(...)` subagent), so the grouper can hide it
+  // from the main supervisor chat and attach it to the matching task
+  // tool-call card.
+  //
+  // LangGraph's subgraph namespace shows up under different keys across
+  // SDK versions / providers. We check every place we've seen it appear.
   const mk = (m as any).additional_kwargs ?? {};
   const rm = (m as any).response_metadata ?? {};
-  const ns: string | undefined =
-    rm.langgraph_checkpoint_ns ??
-    mk.langgraph_checkpoint_ns ??
-    rm.checkpoint_ns ??
-    mk.checkpoint_ns;
-  if (ns && typeof ns === "string" && ns.includes("|")) {
-    // deepagents subagent namespaces look like `task:<id>|<subagent_name>`.
-    const last = ns.split("|").pop() ?? "";
-    const name = last.split(":")[0];
-    if (name && name !== "supervisor") return name;
+  const nsCandidates: Array<unknown> = [
+    rm.langgraph_checkpoint_ns,
+    mk.langgraph_checkpoint_ns,
+    rm.checkpoint_ns,
+    mk.checkpoint_ns,
+    (m as any).langgraph_checkpoint_ns,
+    (m as any).checkpoint_ns,
+    rm.langgraph_path,
+    mk.langgraph_path,
+  ];
+  const ns = nsCandidates.find((v): v is string => typeof v === "string" && v.length > 0);
+  const KNOWN = /^(researcher|writer|reviser|general-purpose)$/;
+  if (ns) {
+    // Canonical deepagents layout: `task:<call_id>|<subagent_name>:<cp>`.
+    // But langgraph may also emit just `<subagent_name>:<cp>` or deeper
+    // `|`-separated chains — walk the segments right-to-left and pick the
+    // first recognised subagent name.
+    const segments = ns.split("|");
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const head = segments[i].split(":")[0];
+      if (head && KNOWN.test(head)) return head;
+    }
+    // Non-empty nested namespace but no recognised subagent name: the
+    // message still came from a subgraph (anything non-empty here means
+    // we're NOT on the root graph), so bucket it under a generic marker
+    // and let the grouper attach it to the most recent open task call.
+    if (segments.length > 1 || ns.includes(":")) return "__subagent__";
   }
   const node: string | undefined = rm.langgraph_node ?? mk.langgraph_node;
-  if (node && /^(researcher|writer|reviser)$/.test(node)) return node;
+  if (node && KNOWN.test(node)) return node;
+  // Fallback: messages produced by `create_agent(name="researcher", ...)`
+  // carry that name on the AIMessage itself.
+  const msgName = (m as any).name;
+  if (typeof msgName === "string" && KNOWN.test(msgName)) return msgName;
   return null;
 }
 
