@@ -18,6 +18,24 @@ services:
       retries: 10
       start_period: 30s
 
+  graph-viz:
+    build:
+      context: .
+      dockerfile: graph-viz/Dockerfile
+    restart: unless-stopped
+    env_file: ./agent/.env
+    environment:
+      PORT: "8088"
+      CORS_ORIGINS: "*"
+    ports:
+      - "8088:8088"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   backend:
     build:
       context: ./backend

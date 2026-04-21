@@ -92,3 +92,28 @@ docker compose up --build
 ```
 
 Or run each service natively — see `README.md`.
+
+
+---
+
+## 5. graph-viz (visualization sidecar)
+
+A tiny FastAPI service that imports the compiled graphs from `./agent`
+and serves them as PNG / Mermaid / JSON. Deploy as its own Railway
+service so visualization lifecycle is independent of the live agent.
+
+- **Root Directory**: `/` *(repo root — NOT `graph-viz/`, because the
+  Dockerfile copies both `./agent` and `./graph-viz`)*
+- **Dockerfile Path**: `graph-viz/Dockerfile`
+- **Health check**: `/healthz`
+- **Environment variables**: everything `./agent` needs at import time
+  (`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, Supabase keys, MCP URL, …).
+- Optional: `CORS_ORIGINS`, `CACHE_TTL_SECONDS`, `LOG_LEVEL`.
+
+Expose public networking → frontend embeds the PNG:
+
+```html
+<img src="https://graph-viz-xxx.up.railway.app/graphs/syllabus_agent_deep.png" />
+```
+
+See `graph-viz/README.md` for full route list.
