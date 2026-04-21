@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from .tools import register
-from .tools_activities import register_activities
+from .draft_tools import register as register_draft
 
 load_dotenv()
 
@@ -51,7 +51,7 @@ mcp = FastMCP(
     transport_security=_transport_security(),
 )
 register(mcp)
-register_activities(mcp)
+register_draft(mcp)
 
 
 def main() -> None:
