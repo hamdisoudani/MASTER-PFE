@@ -72,11 +72,19 @@ below once the user expresses a concrete authoring intent.
   draftGetSyllabusOutline result. If it does not exist, create the
   chapter FIRST with draftAddChapter and use the id from its response.
   Never invent a chapter_id or reuse one from a previous run.
-- Lessons-per-chapter quota: before delegating lessons for the NEXT
-  chapter, re-inspect the outline. Target 3-6 lessons per chapter
-  (unless the user specified a different count). If the current chapter
-  has fewer and the topic is not exhausted, stage more lessons in it
-  BEFORE starting the next chapter.
+- Lessons-per-chapter quota: HARD MINIMUM is 3 lessons per chapter.
+  Never finalize or move past a chapter that has < 3 lessons, and never
+  create a new chapter that will end up with only one lesson — merge it
+  into a neighbour instead. Target range: 3-6 lessons per chapter unless
+  the user explicitly asked for a smaller count (quote their instruction
+  in your plan if you rely on that exception). Before delegating lessons
+  for the NEXT chapter, re-inspect the outline and fill the current one
+  up to the minimum first.
+- Chapter activity (quiz) is MANDATORY once a chapter hits the >= 3
+  lessons bar. After the last lesson in a chapter passes QA, delegate
+  to the activity_builder subagent (or stage it yourself via
+  draftAddActivity kind="quiz"). Do this BEFORE starting the next
+  chapter.
 - If a draft* tool replies "not found" for an id, STOP, re-run
   draftGetSyllabusOutline, and pick the real id.
 
@@ -94,6 +102,13 @@ below once the user expresses a concrete authoring intent.
 - draftPatchLessonBlocks      surgical patch on a draft lesson.
 - draftReadLessonBlocks       read a draft lesson before patching.
 - draftSnapshot               full draft tree (use for preview / handoff).
+- draftAddActivity            attach a chapter-level activity to the draft.
+                              kind="quiz" with a payload containing
+                              questions + correct_choice_ids (authoritative
+                              answer key; frontend verifies locally).
+- draftListActivities         list activities attached to a draft chapter.
+- draftGetActivity            read a draft activity's full payload.
+- draftUpdateActivityPayload  overwrite a draft activity's payload.
 
 NONE of the draft* tools touch Supabase. They mutate in-memory state
 scoped to this thread_id.
@@ -105,6 +120,10 @@ scoped to this thread_id.
                       is ready to go live)
 - reviser     tools: patchLessonBlocks
                      (PERSISTENT - surgical fixes on a published lesson)
+- activity_builder tools: draftAddActivity, draftListActivities,
+                     draftGetActivity, draftUpdateActivityPayload
+                     (DRAFT-ONLY - stages a chapter quiz in the in-memory
+                      draft; persistence happens later via addChapterActivity)
 
 Because subagents start blind, pack the entire `description` you pass to
 `task(...)` with everything they need: the exact lesson title, the
@@ -131,9 +150,16 @@ and return the new id).
       appendLessonContent. The writer returns the persistent lesson_id.
    d. If QA flags issues post-persistence, task(reviser,
       description=<persistent lesson_id + exact list of fixes>).
-6. Update write_todos as lessons complete.
-7. Finish with a SHORT confirmation and a draftSnapshot(thread_id) call
-   so the UI can render the final preview.
+6. After the CURRENT chapter has >= 3 lessons and each lesson passes
+   QA, task(activity_builder, description=<chapter_id + compact
+   per-lesson summaries + quiz spec (5-10 questions, mix single / multi
+   / true_false, ground every question in the chapter's lessons)>).
+   The activity_builder calls draftAddActivity(chapter_id, kind="quiz",
+   ...). Confirm a draft activity now exists for the chapter via
+   draftListActivities before starting the next chapter.
+7. Update write_todos as lessons and chapter activities complete.
+8. Finish with a SHORT confirmation and a draftSnapshot(thread_id) call
+   so the UI can render the final preview (lessons + chapter quizzes).
 
 ## Hard rules enforced via subagent briefs
 - Every lesson >= 18 BlockNote blocks with full H2 skeleton.
@@ -208,6 +234,61 @@ Fix EVERY listed issue in ONE surgical patch. Never shrink the lesson.
 Call patchLessonBlocks(lessonId, blocks=[...]) exactly once, then reply
 with a one-line confirmation and stop."""
 
+
+
+
+ACTIVITY_BUILDER_PROMPT = """You are the ACTIVITY_BUILDER subagent of MASTER-PFE.
+
+You build chapter-level ACTIVITIES in the IN-MEMORY DRAFT. For now the
+only supported kind is "quiz". You do NOT persist to Supabase and you
+do NOT touch lessons.
+
+Tools:
+  - draftAddActivity(chapter_id, kind, title, payload, position?, author?)
+  - draftListActivities(chapter_id)
+  - draftGetActivity(activity_id)
+  - draftUpdateActivityPayload(activity_id, payload, author?)
+
+Your supervisor hands you:
+  - the target chapter_id (DRAFT id, reuse verbatim)
+  - a compact summary of the chapter's lessons (titles + key points)
+  - the learner level and subject
+
+Produce ONE quiz with 5-10 questions, grounded in the chapter's
+lessons. Mix at least two question kinds when the topic allows
+(single, multi, true_false). Each question MUST carry its authoritative
+answer key via correct_choice_ids — the frontend uses that to verify
+learner selections.
+
+Payload schema (STRICT valid JSON, no comments, no trailing commas):
+  {
+    "instructions": "Pick the best answer for each question.",
+    "questions": [
+      {
+        "id": "q1",
+        "prompt": "...",
+        "kind": "single" | "multi" | "true_false",
+        "choices": [ {"id": "a", "text": "..."},
+                     {"id": "b", "text": "..."}, ... ],
+        "correct_choice_ids": ["b"],
+        "explanation": "..."   // optional, one sentence
+      }
+    ]
+  }
+
+Rules:
+  1. 5-10 questions total.
+  2. "single" / "true_false": exactly 1 correct_choice_ids entry.
+     "multi": 2+ correct_choice_ids entries.
+  3. 3-4 plausible choices per question; true_false uses exactly 2.
+  4. Choice ids stable and unique per question: "a","b","c","d".
+  5. No out-of-scope trivia. Every question anchors to a lesson.
+  6. No "...", "…", "etc.", "TODO", "<fill in>" anywhere in the payload.
+  7. Call draftAddActivity exactly ONCE with kind="quiz" and the full
+     payload. Do NOT split the quiz across multiple calls.
+  8. After the tool returns, reply with the draft activity_id on a
+     single line and stop.
+"""
 
 
 import os as _os
@@ -286,6 +367,18 @@ def build_graph():
             "draftPatchLessonBlocks",
             "draftReadLessonBlocks",
             "draftSnapshot",
+            "draftAddActivity",
+            "draftListActivities",
+            "draftGetActivity",
+            "draftUpdateActivityPayload",
+        ) if n in mcp
+    ]
+    activity_builder_tools = [
+        mcp[n] for n in (
+            "draftAddActivity",
+            "draftListActivities",
+            "draftGetActivity",
+            "draftUpdateActivityPayload",
         ) if n in mcp
     ]
     if not writer_tools:
@@ -297,6 +390,7 @@ def build_graph():
         _build_subagent("researcher", RESEARCHER_PROMPT, [web_search, scrape_page]),
         _build_subagent("writer",     WRITER_PROMPT,     writer_tools),
         _build_subagent("reviser",    REVISER_PROMPT,    reviser_tools),
+        _build_subagent("activity_builder", ACTIVITY_BUILDER_PROMPT, activity_builder_tools),
     ]
 
     agent = create_agent(
