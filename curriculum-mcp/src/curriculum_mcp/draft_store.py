@@ -32,6 +32,7 @@ def _thread(thread_id: str) -> dict[str, Any]:
             "chapters": {},  # chapter_id -> chapter dict (includes "lessons" dict)
             "chapter_order": [],
             "lessons": {},   # lesson_id -> lesson dict (global index)
+            "activities": {},  # activity_id -> activity dict (global index)
         }
         _store[thread_id] = bucket
     return bucket
@@ -84,6 +85,20 @@ def outline(syllabus_id: str) -> dict:
                             for lid in ch.get("lesson_order", [])
                             if lid in b["lessons"]
                         ],
+                        "activities": [
+                            {
+                                "id": aid,
+                                "kind": b["activities"][aid].get("kind"),
+                                "title": b["activities"][aid].get("title"),
+                                "position": b["activities"][aid].get("position"),
+                                "question_count": len(
+                                    (b["activities"][aid].get("payload") or {}).get("questions") or []
+                                ),
+                                "updated_at": b["activities"][aid].get("updated_at"),
+                            }
+                            for aid in ch.get("activity_order", [])
+                            if aid in b["activities"]
+                        ],
                     })
                 return {**syl, "chapters": chapters_out}
         raise ValueError(f"draft syllabus {syllabus_id} not found")
@@ -130,6 +145,7 @@ def add_chapter(syllabus_id: str, title: str, summary: Optional[str] = None,
             "summary": summary,
             "position": position,
             "lesson_order": [],
+            "activity_order": [],
             "draft": True,
             "created_at": _now_iso(),
         }
@@ -262,5 +278,131 @@ def snapshot(thread_id: str) -> dict:
             chapters.append({
                 **ch,
                 "lessons": [dict(b["lessons"][lid]) for lid in ch["lesson_order"] if lid in b["lessons"]],
+                "activities": [
+                    dict(b["activities"][aid])
+                    for aid in ch.get("activity_order", [])
+                    if aid in b["activities"]
+                ],
             })
         return {"thread_id": thread_id, "syllabus": dict(syl) if syl else None, "chapters": chapters}
+
+
+# ---------- activities (quizzes, etc.) ----------
+
+_ALLOWED_ACTIVITY_KINDS = {"quiz"}
+
+
+def _validate_quiz_payload(payload: dict) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("quiz payload must be an object")
+    questions = payload.get("questions")
+    if not isinstance(questions, list) or not questions:
+        raise ValueError("quiz payload.questions must be a non-empty list")
+    seen_qids: set[str] = set()
+    for i, q in enumerate(questions):
+        if not isinstance(q, dict):
+            raise ValueError(f"question #{i} must be an object")
+        qid = q.get("id")
+        if not isinstance(qid, str) or not qid:
+            raise ValueError(f"question #{i} missing string 'id'")
+        if qid in seen_qids:
+            raise ValueError(f"duplicate question id '{qid}'")
+        seen_qids.add(qid)
+        if not isinstance(q.get("prompt"), str) or not q["prompt"].strip():
+            raise ValueError(f"question '{qid}' missing 'prompt'")
+        choices = q.get("choices")
+        if not isinstance(choices, list) or len(choices) < 2:
+            raise ValueError(f"question '{qid}' needs at least 2 choices")
+        choice_ids: set[str] = set()
+        for c in choices:
+            if not isinstance(c, dict):
+                raise ValueError(f"question '{qid}' has a non-object choice")
+            cid = c.get("id")
+            if not isinstance(cid, str) or not cid:
+                raise ValueError(f"question '{qid}' choice missing 'id'")
+            if cid in choice_ids:
+                raise ValueError(f"question '{qid}' has duplicate choice id '{cid}'")
+            choice_ids.add(cid)
+            if not isinstance(c.get("text"), str) or not c["text"].strip():
+                raise ValueError(f"question '{qid}' choice '{cid}' missing 'text'")
+        correct = q.get("correct_choice_ids")
+        if not isinstance(correct, list) or not correct:
+            raise ValueError(f"question '{qid}' missing 'correct_choice_ids'")
+        for cid in correct:
+            if cid not in choice_ids:
+                raise ValueError(
+                    f"question '{qid}' correct id '{cid}' is not among its choices"
+                )
+        kind = q.get("kind") or "single"
+        if kind not in {"single", "multi", "true_false"}:
+            raise ValueError(f"question '{qid}' has unknown kind '{kind}'")
+        if kind in {"single", "true_false"} and len(correct) != 1:
+            raise ValueError(
+                f"question '{qid}' kind={kind} must have exactly one correct choice"
+            )
+
+
+def add_activity(chapter_id: str, kind: str, title: str, payload: dict,
+                 position: Optional[int] = None, author: Optional[str] = None) -> dict:
+    if kind not in _ALLOWED_ACTIVITY_KINDS:
+        raise ValueError(f"unsupported activity kind: {kind}")
+    if kind == "quiz":
+        _validate_quiz_payload(payload)
+    with _lock:
+        b = _find_bucket_by_chapter(chapter_id)
+        ch = b["chapters"][chapter_id]
+        ch.setdefault("activity_order", [])
+        aid = f"draft-act-{uuid.uuid4().hex[:8]}"
+        if position is None:
+            position = len(ch["activity_order"])
+        activity = {
+            "id": aid,
+            "chapter_id": chapter_id,
+            "kind": kind,
+            "title": title,
+            "payload": payload,
+            "position": position,
+            "last_author": author,
+            "draft": True,
+            "version": 1,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        b["activities"][aid] = activity
+        ch["activity_order"].insert(min(position, len(ch["activity_order"])), aid)
+        return dict(activity)
+
+
+def list_activities(chapter_id: str) -> list[dict]:
+    with _lock:
+        b = _find_bucket_by_chapter(chapter_id)
+        ch = b["chapters"][chapter_id]
+        return [
+            dict(b["activities"][aid])
+            for aid in ch.get("activity_order", [])
+            if aid in b["activities"]
+        ]
+
+
+def get_activity(activity_id: str) -> dict:
+    with _lock:
+        for b in _store.values():
+            if activity_id in b.get("activities", {}):
+                return dict(b["activities"][activity_id])
+        raise ValueError(f"draft activity {activity_id} not found")
+
+
+def update_activity_payload(activity_id: str, payload: dict,
+                            author: Optional[str] = None) -> dict:
+    with _lock:
+        for b in _store.values():
+            if activity_id in b.get("activities", {}):
+                act = b["activities"][activity_id]
+                if act.get("kind") == "quiz":
+                    _validate_quiz_payload(payload)
+                act["payload"] = payload
+                act["last_author"] = author
+                act["version"] = int(act.get("version", 1)) + 1
+                act["updated_at"] = _now_iso()
+                return dict(act)
+        raise ValueError(f"draft activity {activity_id} not found")
