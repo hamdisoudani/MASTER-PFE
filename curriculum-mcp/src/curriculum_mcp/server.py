@@ -2,22 +2,23 @@
 
 Deployed to Railway as `mcp-curriculum` (streamable-http on :8080, path /mcp).
 
-Two production-only concerns that bite FastMCP here:
+Production notes
+----------------
+1. **DNS rebinding protection** — FastMCP enables
+   `TransportSecuritySettings.enable_dns_rebinding_protection=True` with an
+   empty `allowed_hosts` list by default. The MCP SDK's `_validate_host`
+   only supports exact matches and `:port` wildcards — NOT a bare "*" — so
+   any Host header from Railway (e.g. `mcp-curriculum.up.railway.app`) is
+   rejected with HTTP 421 "Invalid Host header" before the session manager
+   runs. We disable the check by default (the server is still protected
+   by the optional `CURRICULUM_MCP_TOKEN` bearer and Supabase RLS). If you
+   want to re-enable it, set `MCP_ALLOWED_HOSTS` to a comma-separated list
+   of exact hostnames, and optionally `MCP_ALLOWED_ORIGINS`.
 
-1. **DNS rebinding protection (HTTP 421 "Invalid Host header")** — FastMCP
-   enables `TransportSecuritySettings.enable_dns_rebinding_protection=True`
-   with an empty `allowed_hosts` list by default, which only permits
-   `127.0.0.1` / `localhost`. On Railway the Host header is
-   `mcp-curriculum.up.railway.app` (or any custom domain), so every POST
-   /mcp was being rejected with 421 *before* reaching the session
-   manager. We relax the check to "any host/origin" for the streamable
-   transport (the server is still protected by Supabase RLS + the optional
-   CURRICULUM_MCP_TOKEN bearer).
-
-2. **Short-lived clients (HTTP 421 "Session not found")** — `langchain-mcp-adapters`
-   opens a fresh streamable-http transport per tool call and does not pin
-   an `mcp-session-id`. Running FastMCP in `stateless_http=True` +
-   `json_response=True` means each POST is self-contained.
+2. **Stateless streamable-http** — `langchain-mcp-adapters` opens a fresh
+   transport per tool call and does not pin `mcp-session-id`. Running in
+   `stateless_http=True` + `json_response=True` makes every POST
+   self-contained.
 """
 from __future__ import annotations
 import os
@@ -30,16 +31,15 @@ load_dotenv()
 
 
 def _transport_security() -> TransportSecuritySettings:
-    # Allow any Host/Origin by default; narrow via env if you want to pin
-    # the Railway domain(s). Comma-separated.
-    hosts = os.environ.get("MCP_ALLOWED_HOSTS", "*").split(",")
-    origins = os.environ.get("MCP_ALLOWED_ORIGINS", "*").split(",")
-    hosts = [h.strip() for h in hosts if h.strip()]
-    origins = [o.strip() for o in origins if o.strip()]
+    raw_hosts = os.environ.get("MCP_ALLOWED_HOSTS", "").strip()
+    raw_origins = os.environ.get("MCP_ALLOWED_ORIGINS", "").strip()
+    allowed_hosts = [h.strip() for h in raw_hosts.split(",") if h.strip()]
+    allowed_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+    enable = bool(allowed_hosts)
     return TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=hosts or ["*"],
-        allowed_origins=origins or ["*"],
+        enable_dns_rebinding_protection=enable,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
     )
 
 
