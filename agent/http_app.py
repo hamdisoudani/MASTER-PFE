@@ -1,39 +1,43 @@
 """Custom HTTP routes mounted onto the LangGraph API server.
 
-Exposes PNG renderings of the two compiled graphs so you can eyeball the
-topology from a browser:
+Registered via langgraph.json:
 
-    GET /graphs/syllabus_agent.png
-    GET /graphs/syllabus_agent_deep.png
-    GET /graphs/{name}.mmd          # raw mermaid source (no graphviz needed)
-    GET /graphs                     # JSON index
-
-Wired via langgraph.json:
     "http": { "app": "./agent/http_app.py:app" }
 
-Rendering order for PNG:
-  1. graph.get_graph().draw_mermaid_png()         (uses mermaid.ink, no deps)
-  2. graph.get_graph().draw_png()                 (needs pygraphviz)
-  3. fallback -> 503 with mermaid source in body
+Routes (all served at the deployment root, e.g. https://<svc>.railway.app):
+
+    GET /graphs                     JSON index
+    GET /graphs/{name}.png          PNG render (mermaid.ink fallback pygraphviz)
+    GET /graphs/{name}.mmd          raw mermaid source
+    GET /graphs/healthz             liveness probe
+
+Graphs are imported lazily inside each handler so an import/compile failure
+in one graph does not prevent the routes from registering at startup
+(which is what caused the previous 404s on Railway).
 """
 from __future__ import annotations
 
 import logging
 from typing import Callable
 
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse, PlainTextResponse, Response
-from starlette.routing import Route
-
-from agent.graph import graph as syllabus_graph
-from agent.deep_graph import graph as syllabus_deep_graph
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 logger = logging.getLogger(__name__)
 
-GRAPHS: dict[str, object] = {
-    "syllabus_agent": syllabus_graph,
-    "syllabus_agent_deep": syllabus_deep_graph,
-}
+app = FastAPI(title="MASTER-PFE custom routes")
+
+GRAPH_NAMES = ("syllabus_agent", "syllabus_agent_deep")
+
+
+def _load_graph(name: str):
+    if name == "syllabus_agent":
+        from agent.graph import graph
+        return graph
+    if name == "syllabus_agent_deep":
+        from agent.deep_graph import graph
+        return graph
+    return None
 
 
 def _render_png(compiled) -> bytes | None:
@@ -63,26 +67,40 @@ def _render_mermaid(compiled) -> str | None:
         return None
 
 
-async def list_graphs(request):
-    return JSONResponse(
-        {
-            "graphs": [
-                {
-                    "name": name,
-                    "png": f"/graphs/{name}.png",
-                    "mermaid": f"/graphs/{name}.mmd",
-                }
-                for name in GRAPHS
-            ]
-        }
-    )
+@app.get("/graphs/healthz")
+async def healthz():
+    return {"ok": True, "graphs": list(GRAPH_NAMES)}
 
 
-async def graph_png(request):
-    name = request.path_params["name"]
-    compiled = GRAPHS.get(name)
+@app.get("/graphs")
+async def list_graphs():
+    return {
+        "graphs": [
+            {
+                "name": name,
+                "png": f"/graphs/{name}.png",
+                "mermaid": f"/graphs/{name}.mmd",
+            }
+            for name in GRAPH_NAMES
+        ]
+    }
+
+
+@app.get("/graphs/{name}.png")
+async def graph_png(name: str):
+    try:
+        compiled = _load_graph(name)
+    except Exception as exc:
+        logger.exception("failed to import graph %s: %s", name, exc)
+        return JSONResponse(
+            {"error": f"import failed for {name!r}: {exc.__class__.__name__}: {exc}"},
+            status_code=500,
+        )
     if compiled is None:
-        return JSONResponse({"error": f"unknown graph {name!r}", "available": list(GRAPHS)}, status_code=404)
+        return JSONResponse(
+            {"error": f"unknown graph {name!r}", "available": list(GRAPH_NAMES)},
+            status_code=404,
+        )
     png = _render_png(compiled)
     if png is None:
         mmd = _render_mermaid(compiled) or ""
@@ -90,27 +108,26 @@ async def graph_png(request):
             "PNG rendering unavailable (mermaid.ink unreachable and pygraphviz missing). "
             "Mermaid source below.\n\n" + mmd,
             status_code=503,
-            media_type="text/plain",
         )
     return Response(png, media_type="image/png")
 
 
-async def graph_mmd(request):
-    name = request.path_params["name"]
-    compiled = GRAPHS.get(name)
+@app.get("/graphs/{name}.mmd")
+async def graph_mmd(name: str):
+    try:
+        compiled = _load_graph(name)
+    except Exception as exc:
+        logger.exception("failed to import graph %s: %s", name, exc)
+        return JSONResponse(
+            {"error": f"import failed for {name!r}: {exc.__class__.__name__}: {exc}"},
+            status_code=500,
+        )
     if compiled is None:
-        return JSONResponse({"error": f"unknown graph {name!r}", "available": list(GRAPHS)}, status_code=404)
+        return JSONResponse(
+            {"error": f"unknown graph {name!r}", "available": list(GRAPH_NAMES)},
+            status_code=404,
+        )
     mmd = _render_mermaid(compiled)
     if mmd is None:
         return JSONResponse({"error": "mermaid rendering failed"}, status_code=500)
     return PlainTextResponse(mmd, media_type="text/plain")
-
-
-app = Starlette(
-    debug=False,
-    routes=[
-        Route("/graphs", list_graphs, methods=["GET"]),
-        Route("/graphs/{name}.png", graph_png, methods=["GET"]),
-        Route("/graphs/{name}.mmd", graph_mmd, methods=["GET"]),
-    ],
-)
