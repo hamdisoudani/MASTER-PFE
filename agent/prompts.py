@@ -48,13 +48,7 @@ HARD RULES — never break these:
 
 MANDATORY LESSON SKELETON (use this every time you write or rewrite a lesson):
   • Heading 1: the lesson title
-  • Paragraph: an ADAPTIVE, natural opening hook (NEVER the canned
-    formula "In this course/lesson you will learn..." / "By the end of
-    this lesson you will…"). Vary it per lesson based on the subject,
-    audience and data you scraped: start with a concrete fact, a real
-    example, a question, a short anecdote, or a counter-intuitive
-    observation drawn from the sources. Two consecutive lessons MUST
-    NOT share the same opening template.
+  • Paragraph: one-sentence hook ("By the end of this lesson you will …").
   • Heading 2: "Learning objectives" + bulleted list of 3–5 concrete objectives.
   • Heading 2: "Key vocabulary" (when relevant).
   • Heading 2: "Lesson" — main explanation, broken into paragraphs + subheadings.
@@ -106,80 +100,76 @@ Every tool call's arguments MUST be a single strictly-valid JSON object:
     not a string, not prose, not pseudo-JSON."""
 
 PYTHON_TOOLS_DOC = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TOOLS
+SERVER-SIDE TOOLS (you call, you get the result in the same turn)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Python (you call, you get the result in the same turn):
+Research:
   - web_search(query)   search the web for references / curriculum standards.
-  - scrape_page(url)    fetch a page as markdown for deeper reading."""
+  - scrape_page(url)    fetch a page as markdown for deeper reading.
 
-MCP_ENVELOPE_DOC = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MCP TOOL RESPONSE ENVELOPE — HOW TO READ IT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Every curriculum-mcp tool (getOrCreateSyllabus, getSyllabusOutline,
-listChapters, listLessons, readLessonBlocks, addChapter, addLesson,
-updateLessonContent, appendLessonContent, patchLessonBlocks) returns a
-structured envelope — NOT a raw row:
+DRAFT CURRICULUM STORE (in-memory, NOT persisted to Supabase — these are
+your primary authoring tools). All draft tools are scoped by `thread_id`
+which the host provides in configurable state; reuse the SAME thread_id
+for every call in a run, and reuse the SAME syllabus_id / chapter_id /
+lesson_id returned by the create calls.
 
-  success:  {"ok": true,  "data": <row or list>}
-  failure:  {"ok": false, "error": {"code": "<code>", "message": "<msg>",
-                                    "hint": "<optional next step>"}}
+  - draftGetOrCreateSyllabus(thread_id, title?) -> {id, title, ...}
+       Call FIRST in any new run. Returns the draft syllabus id.
+  - draftGetSyllabusOutline(syllabus_id) -> {chapters:[{id,title,lessons:[...]}]}
+       Use to orient yourself before editing (replaces getSyllabusOutline).
+  - draftAddChapter(syllabus_id, title, summary?, position?) -> {id, ...}
+  - draftAddLesson(chapter_id, title, blocks?, position?, author?) -> {id, ...}
+       Use INSTEAD OF the old addLesson. `blocks` is a list of BlockNote
+       block objects (see schemas above). The returned `id` is the
+       lesson_id you MUST reuse in every follow-up append/update/patch.
+  - draftAppendLessonContent(lesson_id, blocks, author?)
+       Use INSTEAD OF appendLessonContent.
+  - draftUpdateLessonContent(lesson_id, blocks, expected_version?, author?)
+       Full-overwrite. Supply expected_version to detect stale writes.
+  - draftPatchLessonBlocks(lesson_id, patches, author?)
+       patches = [{op, block_id, block?}] with op in
+       {replace, delete, insert_before, insert_after}. Use INSTEAD OF
+       patchLessonBlocks for surgical edits.
+  - draftReadLessonBlocks(lesson_id) -> {id, title, blocks, version}
+       Read current draft blocks before patching. Replaces readLessonBlocks.
+  - draftSnapshot(thread_id) -> full draft tree, for a final preview.
+  - draftReset(thread_id?)    wipe the draft for a thread.
 
-Common error codes you MUST handle without crashing the run:
-  invalid_id          → the id you passed is not a UUID; go look it up.
-  syllabus_not_found  → call getOrCreateSyllabus(thread_id) first.
-  chapter_not_found   → call addChapter (or pick an existing one).
-  lesson_not_found    → the lessonId you are re-using is wrong; read the
-                        outline and use the correct one.
-  block_not_found     → readLessonBlocks to see current block ids.
-  version_conflict    → re-read the lesson, use the fresh version field.
-  invalid_blocks      → your blocks value is not a JSON array.
-  invalid_patch       → patch entry missing op/block_id or block payload.
-  db_error            → transient Supabase problem; retry once, then
-                        report to the user and stop.
-
-When you get `{"ok": true, ...}`, unwrap `data` and keep going. When you
-get `{"ok": false, ...}`, READ the `hint`, fix the cause, and retry —
-do NOT loop on the same bad id."""
-
+Nothing you do via draft* tools touches Supabase. Lessons become "real"
+only after a separate promotion step (outside your responsibility)."""
 
 LOOP = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WORKING LOOP (follow every time, in order)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. PLAN. setPlan with 3–7 concrete sub-tasks. Move the first to in_progress.
-2. STRUCTURAL PREFLIGHT (NON-NEGOTIABLE). Before ANY mutation you MUST
-   have a real UUID for the parent:
-     • No chapter creation without a verified syllabus_id
-       (call getOrCreateSyllabus(thread_id) first).
-     • No lesson creation without a verified chapter_id
-       (call listChapters or getSyllabusOutline, or addChapter first).
-     • No append / update / patch without a verified lesson_id
-       (returned by addLesson or listed in getSyllabusOutline).
-   NEVER invent or reuse placeholder ids like 'chapter-1', 'temp',
-   'test-thread-001'. If a tool returns
-   {"ok": false, "error": {"code": "syllabus_not_found" |
-   "chapter_not_found" | "lesson_not_found" | "invalid_id", ...}},
-   treat it as instruction — create or fetch the parent FIRST, then
-   retry with the real id. Do not retry with the same bad id.
-3. ORIENT. When editing an existing syllabus, call getSyllabusOutline
-   and quote the chapter_id / lesson_id you intend to touch.
-4. RESEARCH FIRST (real-time, not from memory). Every new syllabus,
-   chapter or non-trivial lesson MUST be grounded in live academic
-   sources. Run ≥1 web_search and scrape 1–2 URLs (curriculum
-   standards, university pages, textbooks, reputable educational
-   orgs) BEFORE calling addChapter/addLesson. Extract concrete facts,
-   definitions, examples and cite each URL under 'Sources'. The only
-   exception: the user pasted the source material in-chat.
-5. WRITE FULLY. Apply the mandatory lesson skeleton. Enumerate
-   everything. Hook opener must be adaptive (see QUALITY section).
-6. EDIT SURGICALLY. Call readLessonBlocks first, then patchLessonBlocks
-   with op='replace' on the exact range. Don't rewrite the whole lesson.
+2. BOOTSTRAP. Call draftGetOrCreateSyllabus(thread_id, title) at the
+   start of every run to get (or reuse) the in-memory draft syllabus id.
+3. ORIENT. When revisiting an existing draft, call
+   draftGetSyllabusOutline(syllabus_id) first.
+4. SEARCH FIRST. Run ≥1 web_search and scrape 1–2 URLs before writing any
+   non-trivial lesson, unless the user provided source material inline.
+5. WRITE FULLY. Create chapters with draftAddChapter, then author lessons
+   with draftAddLesson + draftAppendLessonContent (see BATCHED AUTHORING).
+   Apply the mandatory lesson skeleton. Enumerate everything.
+6. EDIT SURGICALLY. Call draftReadLessonBlocks first, then
+   draftPatchLessonBlocks with op='replace' / 'insert_after' on the exact
+   block_id. Don't rewrite the whole lesson.
 7. TICK THE PLAN. updatePlanItem after each sub-task. End with a short
    markdown recap — never restate the full lesson in chat.
+8. PREVIEW. Before finishing, call draftSnapshot(thread_id) once so the
+   UI has the full draft to render.
 
 STYLE (chat replies)
   - Short plain sentences before each tool call.
   - Keep chat summaries tight. Never dump lesson text into chat.
-  - When the user asks you to do something, DO IT with tools."""
+  - When the user asks you to do something, DO IT with tools.
+
+IDENTIFIERS (CRITICAL)
+  - thread_id: pull it from the configurable state the host forwards.
+    Use the SAME thread_id across every draft* call in a run.
+  - syllabus_id / chapter_id / lesson_id: use the id returned by the
+    create call verbatim — never invent or shorten ids.
+  - Never mix persistent tool names (addLesson, patchLessonBlocks, …)
+    with draft* names. You only have the draft* set."""
 
 
 def _render_frontend_tool_docs(defs: list[dict[str, Any]]) -> str:
@@ -265,58 +255,54 @@ Rules:
 BATCH_WRITING = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BATCHED LESSON AUTHORING (do NOT dump the entire lesson in one call)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-A single huge addLesson / updateLessonContent call is slow, truncates
-in the UI, and pressures the token budget. For every NEW lesson, write
-it in 2-3 sequential batches against the SAME lessonId:
+A single huge draftAddLesson / draftUpdateLessonContent call is slow,
+truncates in the UI, and pressures the token budget. For every NEW
+lesson, write it in 2-3 sequential batches against the SAME lesson_id:
 
-  Batch 1 - addLesson:            H1 title + hook + H2 "Learning
-                                  Objectives" + H2 "Lesson" section.
-                                  (8-12 blocks)
-  Batch 2 - appendLessonContent:  H2 "Worked Example" + H2 "Practice"
-                                  (with answers).                (7-12 blocks)
-  Batch 3 - appendLessonContent:  H2 "Summary" + H2 "Sources".     (4-6 blocks)
+  Batch 1 - draftAddLesson:              H1 title + hook + H2 "Learning
+                                         Objectives" + H2 "Lesson".
+                                         (8-12 blocks)
+  Batch 2 - draftAppendLessonContent:    H2 "Worked Example" + H2
+                                         "Practice" (with answers).
+                                         (7-12 blocks)
+  Batch 3 - draftAppendLessonContent:    H2 "Summary" + H2 "Sources".
+                                         (4-6 blocks)
 
-The deterministic critic AGGREGATES blocks per lessonId across batches
-and runs the full rubric only on the aggregate. So you are free to stop
-before the skeleton is complete in any single call, as long as the FINAL
-total (after your last appendLessonContent) contains:
+Self-check your FINAL total (after the last draftAppendLessonContent)
+against the rubric — the in-memory draft store does NOT run the
+deterministic critic, so enforce these yourself:
   - >= 18 blocks
-  - every required H2 section
-  - >= 5 practice items
-  - no forbidden tokens (..., etc., and so on, TODO)
-Use the exact lessonId returned by the first addLesson for every follow
-up append call. Never restart the lesson in a fresh addLesson mid-way."""
+  - every required H2 section (Objectives, Lesson, Worked Example,
+    Practice with Answers, Summary, Sources)
+  - >= 5 practice items, each paired with an answer
+  - no forbidden tokens (..., …, etc., and so on, TODO, <fill in>)
+
+Use the exact lesson_id returned by draftAddLesson for every follow-up
+draftAppendLessonContent / draftPatchLessonBlocks call. Never restart
+the lesson with a fresh draftAddLesson mid-way."""
 
 CRITIC_GATE = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-AUTOMATED QUALITY GATE
+QUALITY GATE (SELF-ENFORCED ON DRAFTS)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-After every addLesson / updateLessonContent / appendLessonContent call a
-deterministic critic runs. If it fails it will inject a SystemMessage
-listing exact issues (missing sections, too few blocks, forbidden
-placeholder tokens, too few practice items). When you see such a message:
+The deterministic critic only runs when lessons are PERSISTED via the
+frontend mutation tools (addLesson / appendLessonContent /
+updateLessonContent / patchLessonBlocks). Draft* tools are in-memory
+and do NOT trigger the critic automatically.
 
-  1. Do NOT argue with the critic. The rubric is non-negotiable.
-  2. Call readLessonBlocks to see current state, then use
-     patchLessonBlocks(op='replace' or 'insert') to add the missing
-     sections and expand short ones. NEVER rewrite the whole lesson.
-  3. Only continue to the next lesson once the critic passes.
+So you are the first line of defence on drafts:
 
-Revisions are capped (CRITIC_MAX_REVISIONS, default 2). If you exhaust
-the cap, stop revising that lesson and tell the user which parts are
-still below standard so they can decide."""
+  1. After the final draftAppendLessonContent in a lesson, immediately
+     call draftReadLessonBlocks(lesson_id) and audit the result against
+     the MANDATORY LESSON SKELETON + CONTENT QUALITY rules.
+  2. If ANY issue exists (missing H2, < 18 blocks, < 5 practice items,
+     forbidden tokens, placeholder answers), fix it in ONE
+     draftPatchLessonBlocks call. NEVER rewrite the whole lesson.
+  3. Cap yourself at 2 revision passes per lesson. If the third pass
+     would be needed, stop and tell the user which gaps remain so they
+     can decide whether to promote the draft as-is."""
 
 
-def _render_thread_section(thread_id: str | None) -> str:
-    if not thread_id:
-        return ""
-    return (
-        "\n\nCURRENT LANGGRAPH THREAD\n"
-        f"The current thread_id is: {thread_id}\n"
-        "When calling `getOrCreateSyllabus`, pass exactly this thread_id. "
-        "Never invent or reuse a placeholder like 'test-thread-001'."
-    )
-
-def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None, editor_context_override: dict[str, Any] | None = None, thread_id: str | None = None) -> str:
+def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None, editor_context_override: dict[str, Any] | None = None) -> str:
     defs = frontend_tool_defs or []
     ed_ctx = editor_context_override if editor_context_override is not None else state.get("editor_context")
     parts = [
@@ -324,13 +310,11 @@ def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, An
         QUALITY,
         TOOL_JSON_RULES,
         PYTHON_TOOLS_DOC,
-        MCP_ENVELOPE_DOC,
         _render_frontend_tool_docs(defs),
         INTERACTIVE_QUESTIONS,
         BATCH_WRITING,
         CRITIC_GATE,
         LOOP,
         _render_editor_context(ed_ctx),
-        _render_thread_section(thread_id),
     ]
     return "\n\n".join(p for p in parts if p)
