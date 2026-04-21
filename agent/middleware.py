@@ -34,6 +34,10 @@ ELIDABLE_MUTATION_TOOLS = {
     "draftUpdateLessonContent",
     "draftAppendLessonContent",
     "draftPatchLessonBlocks",
+    "draftAddActivity",
+    "draftUpdateActivityPayload",
+    "addChapterActivity",
+    "updateChapterActivity",
 }
 ELIDABLE_READ_TOOLS = {
     "scrape_page",
@@ -44,6 +48,10 @@ ELIDABLE_READ_TOOLS = {
     "draftReadLessonBlocks",
     "draftSnapshot",
     "draftScoreLesson",
+    "draftListActivities",
+    "draftGetActivity",
+    "listChapterActivities",
+    "getActivity",
 }
 
 
