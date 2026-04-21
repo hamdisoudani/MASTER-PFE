@@ -10,12 +10,9 @@ from agent.nodes import (
     chat_node,
     critic_node,
     frontend_tool_node,
-    plan_router,
     route_after_chat,
     route_after_critic,
     route_after_frontend_tools,
-    route_after_python_tools,
-    tools_post_hook,
 )
 from agent.state import AgentState
 from agent.tools import PYTHON_TOOLS, PYTHON_TOOL_NAMES
@@ -30,45 +27,34 @@ def _tool_error_handler(exc: Exception) -> str:
 
 
 def build_graph():
+    """syllabus_agent — classic ReAct loop with critic gate on lesson mutations.
+
+    The hierarchical plan_router / tools_post_hook layer referenced by an
+    earlier refactor never landed in ``agent/nodes.py``. The critic is
+    triggered exclusively from ``frontend_tool_node`` via
+    ``last_authored_lesson`` (see state.py docstring), and server-side
+    draft* tools are QA-gated through the VERIFY_BEFORE_ACT + CRITIC_GATE
+    prompt sections (see agent/prompts.py).
+    """
     g = StateGraph(AgentState)
     g.add_node("chat_node", chat_node)
     g.add_node("tools", ToolNode(PYTHON_TOOLS, handle_tool_errors=_tool_error_handler))
-    # Runs after `tools` to (a) extract a plan when submit_plan was called,
-    # and (b) surface draft* lesson mutations into `last_authored_lesson`
-    # so the critic fires for the classic syllabus_agent path — which it
-    # used to skip because the critic only watched frontend mutations.
-    g.add_node("tools_post_hook", tools_post_hook)
     g.add_node("frontend_tools", frontend_tool_node)
     g.add_node("critic_node", critic_node)
-    # Deterministic plan advancement: marks the current plan step, moves
-    # the cursor, and injects the next-lesson brief. When the plan is
-    # empty the node is a no-op and the graph behaves exactly like the
-    # classic ReAct loop.
-    g.add_node("plan_router", plan_router)
 
     g.add_conditional_edges(
         "chat_node",
         route_after_chat,
         {"tools": "tools", "frontend_tools": "frontend_tools", "end": END},
     )
-    g.add_edge("tools", "tools_post_hook")
-    g.add_conditional_edges(
-        "tools_post_hook",
-        route_after_python_tools,
-        {
-            "critic_node": "critic_node",
-            "plan_router": "plan_router",
-            "chat_node": "chat_node",
-        },
-    )
+    g.add_edge("tools", "chat_node")
     g.add_conditional_edges(
         "frontend_tools",
         route_after_frontend_tools,
         {"critic_node": "critic_node", "chat_node": "chat_node"},
     )
-    g.add_edge("critic_node", "plan_router")
     g.add_conditional_edges(
-        "plan_router",
+        "critic_node",
         route_after_critic,
         {"chat_node": "chat_node", "end": END},
     )
