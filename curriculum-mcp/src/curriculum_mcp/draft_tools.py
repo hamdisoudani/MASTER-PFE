@@ -73,3 +73,25 @@ def register(mcp: FastMCP) -> None:
         """Clear the draft for a thread (or the whole draft store if thread_id is null)."""
         draft_store.reset(thread_id)
         return {"ok": True, "thread_id": thread_id}
+    @mcp.tool()
+    def draftScoreLesson(lesson_id: str) -> dict:
+        """Run the deterministic quality rubric on a draft lesson and return
+        ``{pass, issues[], stats{}}``. Lets the writer self-score before
+        publishing to the frontend, so failed drafts never hit Supabase.
+
+        The rubric lives in ``agent.critic.evaluate_lesson`` — imported
+        lazily so this MCP package has no hard dependency on the agent.
+        """
+        try:
+            from agent.critic import evaluate_lesson  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            return {"pass": False, "issues": [f"critic unavailable: {exc}"], "stats": {}}
+        lesson = draft_store.read_lesson_blocks(lesson_id)
+        report = evaluate_lesson(lesson.get("blocks") or [])
+        return {
+            "lesson_id": lesson_id,
+            "title": lesson.get("title"),
+            "version": lesson.get("version"),
+            **report,
+        }
+
