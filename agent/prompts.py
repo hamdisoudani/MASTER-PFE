@@ -249,7 +249,17 @@ the cap, stop revising that lesson and tell the user which parts are
 still below standard so they can decide."""
 
 
-def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None, editor_context_override: dict[str, Any] | None = None) -> str:
+def _render_thread_section(thread_id: str | None) -> str:
+    if not thread_id:
+        return ""
+    return (
+        "\n\nCURRENT LANGGRAPH THREAD\n"
+        f"The current thread_id is: {thread_id}\n"
+        "When calling `getOrCreateSyllabus`, pass exactly this thread_id. "
+        "Never invent or reuse a placeholder like 'test-thread-001'."
+    )
+
+def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, Any]] | None = None, editor_context_override: dict[str, Any] | None = None, thread_id: str | None = None) -> str:
     defs = frontend_tool_defs or []
     ed_ctx = editor_context_override if editor_context_override is not None else state.get("editor_context")
     parts = [
@@ -263,5 +273,6 @@ def build_system_prompt(state: AgentState, frontend_tool_defs: list[dict[str, An
         CRITIC_GATE,
         LOOP,
         _render_editor_context(ed_ctx),
+        _render_thread_section(thread_id),
     ]
     return "\n\n".join(p for p in parts if p)

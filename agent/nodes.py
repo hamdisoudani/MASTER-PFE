@@ -104,7 +104,7 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
         editor_ctx = state.get("editor_context")
 
     full_messages = [
-        SystemMessage(content=build_system_prompt(state, _frontend_tool_defs(config), editor_ctx))
+        SystemMessage(content=build_system_prompt(state, _frontend_tool_defs(config), editor_ctx, thread_id=(cfg.get('thread_id') if isinstance(cfg, dict) else None)))
     ] + messages
 
     try:
@@ -119,6 +119,31 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]
         return {"messages": [err_msg], "stop_reason": "error"}
 
     has_tool_calls = bool(getattr(response, "tool_calls", None))
+    real_thread_id = ""
+    try:
+        real_thread_id = str(cfg.get("thread_id") or "").strip()
+    except Exception:
+        real_thread_id = ""
+    if has_tool_calls and real_thread_id:
+        rewritten = False
+        new_tool_calls = []
+        for tc in (response.tool_calls or []):
+            if tc.get("name") == "getOrCreateSyllabus":
+                args = dict(tc.get("args") or {})
+                if args.get("thread_id") != real_thread_id:
+                    logger.info(
+                        "overriding getOrCreateSyllabus thread_id: %r -> %r",
+                        args.get("thread_id"), real_thread_id,
+                    )
+                    args["thread_id"] = real_thread_id
+                    tc = {**tc, "args": args}
+                    rewritten = True
+            new_tool_calls.append(tc)
+        if rewritten:
+            try:
+                response.tool_calls = new_tool_calls  # type: ignore[attr-defined]
+            except Exception:
+                pass
     gc_updates = gc_persistent_messages(raw)
     out: dict[str, Any] = {
         "messages": [*gc_updates, response],
