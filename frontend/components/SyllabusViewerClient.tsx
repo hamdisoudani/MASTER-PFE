@@ -45,7 +45,7 @@ export default function SyllabusViewerClient() {
 
   const editorPane = activeLesson ? (
     <BlockNoteEditor
-      key={`${activeLesson.id}:${activeLesson.version ?? 0}`}
+      key={`${activeLesson.id}:${activeLesson.version ?? 0}:${activeLesson.blocksLoaded ? 1 : 0}`}
       lessonId={activeLesson.id}
       initialContent={activeLesson.content}
     />
