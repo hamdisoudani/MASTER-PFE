@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useCreateBlockNote } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/mantine';
 import '@blocknote/core/fonts/inter.css';
@@ -21,6 +21,27 @@ export default function BlockNoteEditorCore({ lessonId, initialContent }: Props)
       : undefined;
 
   const editor = useCreateBlockNote({ initialContent: safeContent });
+
+  // Track last-applied content reference so we only replace when it actually changes.
+  // This covers the case where the component is NOT remounted but the lesson blocks
+  // arrive asynchronously via the store (e.g. first-time hydration for a lesson
+  // whose meta was already present, so the outer `key` did not flip).
+  const lastAppliedRef = useRef<Block[] | null>(null);
+  useEffect(() => {
+    if (!editor) return;
+    if (!initialContent || initialContent.length === 0) return;
+    if (lastAppliedRef.current === initialContent) return;
+    try {
+      const current = editor.document;
+      editor.replaceBlocks(
+        current,
+        initialContent as unknown as Parameters<typeof editor.replaceBlocks>[1]
+      );
+      lastAppliedRef.current = initialContent;
+    } catch (err) {
+      console.error('BlockNote replaceBlocks failed:', err);
+    }
+  }, [editor, initialContent]);
 
   useEffect(() => {
     setRenderError(lessonId, null);
