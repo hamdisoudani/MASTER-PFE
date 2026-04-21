@@ -41,6 +41,14 @@ FORBIDDEN_PATTERNS = [
     r"\bTODO\b",
     r"<\s*fill[\s_-]*in\s*>",
 ]
+
+CANNED_HOOK_PATTERNS = [
+    r"^\s*in this (course|lesson|chapter)[^.]{0,80}you will learn",
+    r"^\s*by the end of this (course|lesson|chapter)[^.]{0,80}you will",
+    r"^\s*welcome to this (course|lesson|chapter)",
+    r"^\s*this (course|lesson|chapter) (is|will be) about",
+]
+_CANNED_HOOK_RE = re.compile("|".join(CANNED_HOOK_PATTERNS), re.IGNORECASE)
 _FORBIDDEN_RE = re.compile("|".join(FORBIDDEN_PATTERNS), re.IGNORECASE)
 
 
@@ -102,6 +110,24 @@ def evaluate_lesson(blocks: Any) -> dict[str, Any]:
             "Forbidden placeholder tokens found: " + ", ".join(sorted(banned))
             + '. The hard rule is: enumerate EVERY item in any sequence — no ellipses, no "etc.", no "and so on".'
         )
+
+
+    first_para = next(
+        (b for b in blocks
+         if isinstance(b, dict) and b.get("type") == "paragraph"
+         and _flatten_text(b).strip()),
+        None,
+    )
+    if first_para is not None:
+        opener = _flatten_text(first_para).strip()
+        if _CANNED_HOOK_RE.search(opener):
+            issues.append(
+                'Opening hook is a canned boilerplate ("In this course you will learn..." / '
+                '"By the end of this lesson you will..." / "Welcome to..."). '
+                "Rewrite it as an ADAPTIVE opener drawn from the lesson's real source "
+                "material: a concrete fact, a question, an example, a short anecdote, "
+                "or a surprising number."
+            )
 
     has_practice = any("practice" in h for h in h2s)
     if has_practice:
