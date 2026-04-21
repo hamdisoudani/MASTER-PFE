@@ -29,12 +29,47 @@ export interface Lesson {
   lastAuthor?: string | null;
 }
 
+
+export type ActivityKind = 'quiz';
+export type QuizQuestionKind = 'single' | 'multi' | 'true_false';
+
+export interface QuizChoice {
+  id: string;
+  text: string;
+}
+
+export interface QuizQuestion {
+  id: string;
+  prompt: string;
+  kind: QuizQuestionKind;
+  choices: QuizChoice[];
+  /** Authoritative answer key. Frontend verifies selections against this list. */
+  correct_choice_ids: string[];
+  explanation?: string;
+}
+
+export interface QuizActivityPayload {
+  instructions?: string;
+  questions: QuizQuestion[];
+}
+
+export interface ChapterActivity {
+  id: string;
+  chapterId: string;
+  kind: ActivityKind;
+  title: string;
+  position?: number;
+  payload: QuizActivityPayload;
+  updatedAt?: string;
+}
+
 export interface Chapter {
   id: string;
   syllabusId: string;
   title: string;
   description?: string;
   lessons: Lesson[];
+  activities?: ChapterActivity[];
   isExpanded: boolean;
   position?: number;
 }
