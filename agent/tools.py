@@ -23,17 +23,6 @@ async def scrape_page(url: str) -> str:
         return f"# {result.get('title','')}\n\n{result.get('markdown','')}"
     return f"Failed to scrape {url}: {result.get('error','unknown error')}"
 
-BUILTIN_PYTHON_TOOLS = [web_search, scrape_page, submit_plan]
-
-# The "normal" (classic) syllabus agent writes to the IN-MEMORY DRAFT store.
-# Persistent Supabase-backed mutations are reserved for the writer / summarizer
-# subagents in the deep graph (see agent/deep_graph.py).
-CURRICULUM_MCP_TOOLS = load_curriculum_tools(mode="draft")
-
-PYTHON_TOOLS = list(BUILTIN_PYTHON_TOOLS) + list(CURRICULUM_MCP_TOOLS)
-PYTHON_TOOL_NAMES: set[str] = {t.name for t in PYTHON_TOOLS}
-
-
 @tool
 async def submit_plan(steps: list[dict]) -> str:
     """Register the authoring plan for the current thread.
@@ -70,3 +59,14 @@ async def submit_plan(steps: list[dict]) -> str:
     return _json.dumps({"ok": True, "step_count": len(normalized),
                         "plan": normalized,
                         "_submit_plan_marker": True})
+
+
+BUILTIN_PYTHON_TOOLS = [web_search, scrape_page, submit_plan]
+
+# The "normal" (classic) syllabus agent writes to the IN-MEMORY DRAFT store.
+# Persistent Supabase-backed mutations are reserved for the writer / summarizer
+# subagents in the deep graph (see agent/deep_graph.py).
+CURRICULUM_MCP_TOOLS = load_curriculum_tools(mode="draft")
+
+PYTHON_TOOLS = list(BUILTIN_PYTHON_TOOLS) + list(CURRICULUM_MCP_TOOLS)
+PYTHON_TOOL_NAMES: set[str] = {t.name for t in PYTHON_TOOLS}
