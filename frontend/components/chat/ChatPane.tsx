@@ -141,38 +141,11 @@ const FRONTEND_TOOLS = [
       },
     },
   },
-    {
-    name: "createSyllabus",
-    description: "Create a new syllabus with an id, title, subject, and optional description. Use this only when starting a brand new course plan.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["id", "title", "subject", "description"],
-      properties: {
-        id: { type: "string" },
-        title: { type: "string" },
-        subject: { type: "string" },
-        description: { type: ["string", "null"] },
-      },
-    },
-  },
-  {
-    name: "addChapter",
-    description: "Append a new chapter to an existing syllabus. Provide the syllabusId, a fresh chapterId, a title, and an optional description.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["syllabusId", "chapterId", "title", "description"],
-      properties: {
-        syllabusId: { type: "string" },
-        chapterId: { type: "string" },
-        title: { type: "string" },
-        description: { type: ["string", "null"] },
-      },
-    },
-  },
+  // DEPRECATED (PR4) — createSyllabus / addChapter moved to curriculum-mcp
+  // (tool names: getOrCreateSyllabus, addChapter). The agent now writes
+  // directly to Supabase and the browser refreshes via realtime subscription.
+  // Keeping these as frontend tools shadows the MCP versions and causes the
+  // agent to mutate only the local zustand store (no DB persistence).
   // DEPRECATED (PR4) — lesson-mutation tools moved to curriculum-mcp.
   // The agent now writes lessons directly to Supabase via MCP; the browser
   // receives updates through a Supabase realtime subscription.
@@ -221,34 +194,9 @@ const FRONTEND_TOOLS = [
   //     },
   //   },
   // },
-  {
-    name: "getSyllabusOutline",
-    description: "Read-only. Returns the skeleton of the current thread's syllabus. Pass null for syllabusId to use the active one.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["syllabusId"],
-      properties: {
-        syllabusId: { type: ["string", "null"] },
-      },
-    },
-  },
-  {
-    name: "readLessonBlocks",
-    description: "Read-only. Returns a 1-indexed inclusive slice of a lesson's BlockNote content. Use this before patchLessonBlocks so you know what you're replacing.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["lessonId", "startBlock", "endBlock"],
-      properties: {
-        lessonId: { type: "string" },
-        startBlock: { type: "integer" },
-        endBlock: { type: "integer" },
-      },
-    },
-  },
+  // DEPRECATED (PR4) — getSyllabusOutline / readLessonBlocks moved to
+  // curriculum-mcp. Same shadowing problem as above: if declared here the
+  // agent routes reads through the browser zustand store instead of Supabase.
   // DEPRECATED (PR4) — patchLessonBlocks moved to curriculum-mcp. See git
   // history on branch feat/supabase-mcp-curriculum for the original schema.
   // {
@@ -1431,8 +1379,18 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
     // typing) don't complain.
     const nn = <T,>(v: T | null | undefined): T | undefined => (v ?? undefined) as T | undefined;
     const dispatch: Record<string, () => any> = {
-      createSyllabus: () => store.createSyllabus(a.id, a.title, a.subject, nn(a.description)),
-      addChapter: () => store.addChapter(a.syllabusId, a.chapterId, a.title, nn(a.description)),
+      // DEPRECATED (PR4) — createSyllabus / addChapter now handled by
+      // curriculum-mcp (Supabase). The schemas are removed from FRONTEND_TOOLS
+      // above so the agent never emits these as frontend tool calls, but keep
+      // defensive no-ops in case a stale deployment resumes an old interrupt.
+      createSyllabus: () => {
+        console.warn("[PR4] createSyllabus frontend tool is deprecated — use curriculum-mcp getOrCreateSyllabus");
+        return null;
+      },
+      addChapter: () => {
+        console.warn("[PR4] addChapter frontend tool is deprecated — writes now go through curriculum-mcp");
+        return null;
+      },
       // DEPRECATED (PR4) — lesson mutations moved to curriculum-mcp. The MCP
       // server writes directly to Supabase; the UI re-renders via the realtime
       // subscription. The dispatch entries below are kept as a reference and
@@ -1459,9 +1417,15 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
       // appendLessonContent: () => store.appendLessonContent(a.lessonId, a.blocks ?? []),
       // patchLessonBlocks: () =>
       //   store.patchLessonBlocks(a.lessonId, a.op, a.startBlock, a.endBlock ?? null, a.blocks ?? []),
-      getSyllabusOutline: () => store.getSyllabusOutline(nn(a.syllabusId)),
-      readLessonBlocks: () =>
-        store.readLessonBlocks(a.lessonId, a.startBlock, a.endBlock),
+      // DEPRECATED (PR4) — reads go through curriculum-mcp (Supabase) now.
+      getSyllabusOutline: () => {
+        console.warn("[PR4] getSyllabusOutline frontend tool is deprecated — use curriculum-mcp");
+        return null;
+      },
+      readLessonBlocks: () => {
+        console.warn("[PR4] readLessonBlocks frontend tool is deprecated — use curriculum-mcp");
+        return null;
+      },
       setPlan: () =>
         plan.setPlan(
           (a.items ?? []).map((it: any) => ({
