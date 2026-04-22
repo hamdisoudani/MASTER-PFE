@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useQueryState } from "nuqs";
-import { Gauge, Zap, Sparkles } from "lucide-react";
+import { Gauge, Zap, Sparkles, GitBranch } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
 import { useThreads, threadVariant } from "@/providers/Thread";
