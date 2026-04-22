@@ -449,6 +449,49 @@ def _render_critic_feedback(feedback: str | None) -> str:
     )
 
 
+_AUTHORING_INTENT_TOKENS = (
+    "syllabus", "lesson", "chapter", "curriculum", "course", "quiz",
+    "activity", "objective", "worked example", "practice", "exercise",
+    "grade", "student", "learner", "teach", "unit", "module", "create",
+    "add", "write", "extend", "revise", "edit", "draft", "outline",
+)
+
+
+def _has_authoring_intent(state: AgentState, ed_ctx: dict[str, Any] | None) -> bool:
+    """Detect whether the agent should emit the heavy WORKING-LOOP sections.
+
+    Returns True when ANY of:
+      - an editor context (syllabus skeleton) is attached,
+      - the agent already has a draft syllabus id / cached lesson blocks /
+        pending critic state (i.e. we are mid-authoring),
+      - the latest user message contains a curriculum authoring keyword.
+
+    On pure greetings / small talk ("hi", "thanks") we return False so the
+    prompt stays short — matches the "CONVERSATIONAL OPENING" rule in
+    ROLE. Keeps latency low and avoids the LLM jumping into the working
+    loop before the user has actually asked for anything.
+    """
+    if ed_ctx:
+        return True
+    for key in ("draft_syllabus_id", "last_authored_lesson", "critic_feedback"):
+        if state.get(key):
+            return True
+    cache = state.get("lesson_blocks_cache") or {}
+    if cache:
+        return True
+    # Scan the most recent HumanMessage content (if any).
+    msgs = state.get("messages") or []
+    for m in reversed(msgs):
+        # Duck-type check to stay import-free inside prompts.py.
+        if getattr(m, "type", None) == "human" or m.__class__.__name__ == "HumanMessage":
+            text = m.content if isinstance(m.content, str) else ""
+            if not text:
+                return False
+            lower = text.lower()
+            return any(tok in lower for tok in _AUTHORING_INTENT_TOKENS)
+    return False
+
+
 def build_system_prompt(
     state: AgentState,
     frontend_tool_defs: list[dict[str, Any]] | None = None,
@@ -459,20 +502,27 @@ def build_system_prompt(
     defs = frontend_tool_defs or []
     ed_ctx = editor_context_override if editor_context_override is not None else state.get("editor_context")
     fb = critic_feedback if critic_feedback is not None else state.get("critic_feedback")
-    parts = [
+
+    authoring = _has_authoring_intent(state, ed_ctx)
+
+    # Core sections always included — role framing + tool JSON rules + tool
+    # reference so the model knows its options even during small talk.
+    parts: list[str] = [
         ROLE,
-        QUALITY,
         TOOL_JSON_RULES,
         PYTHON_TOOLS_DOC,
         _render_frontend_tool_docs(defs),
         INTERACTIVE_QUESTIONS,
-        BATCH_WRITING,
-        ACTIVITIES,
-        CRITIC_GATE,
-        LOOP,
-        VERIFY_BEFORE_ACT,
+    ]
+    if authoring or fb:
+        # Heavy authoring guidance — skipped on conversational-only turns to
+        # keep prompts lean (and latency down) until the user actually asks
+        # for curriculum work. Always included once critic feedback is
+        # pending so the model sees the full revision context.
+        parts.extend([QUALITY, BATCH_WRITING, ACTIVITIES, CRITIC_GATE, LOOP, VERIFY_BEFORE_ACT])
+    parts.extend([
         _render_thread_id(thread_id),
         _render_editor_context(ed_ctx),
         _render_critic_feedback(fb),
-    ]
+    ])
     return "\n\n".join(p for p in parts if p)
