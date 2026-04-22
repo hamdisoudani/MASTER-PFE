@@ -22,9 +22,16 @@ from langchain_core.messages import (
 
 logger = logging.getLogger(__name__)
 
-KEEP_RECENT_TURNS = 6
-MAX_TOOL_RESULT_CHARS = 1200
-MAX_ELIDED_TOOL_RESULT_CHARS = 400
+# Tunables (env-overridable). Lower KEEP_RECENT_TURNS because a single
+# authoring run frequently runs 50+ AI/tool turns under one user message --
+# boundary-based windows alone never reach old lessons. KEEP_MAX_MESSAGES
+# is an absolute cap by message index so long tool loops still get GC'd.
+import os as _os
+KEEP_RECENT_TURNS = int(_os.getenv("AGENT_GC_KEEP_RECENT_TURNS", "3"))
+KEEP_MAX_MESSAGES = int(_os.getenv("AGENT_GC_KEEP_MAX_MESSAGES", "40"))
+MAX_TOOL_RESULT_CHARS = int(_os.getenv("AGENT_GC_MAX_TOOL_RESULT_CHARS", "1200"))
+MAX_ELIDED_TOOL_RESULT_CHARS = int(_os.getenv("AGENT_GC_ELIDED_TOOL_RESULT_CHARS", "400"))
+MAX_TOOL_CALL_ARG_CHARS = int(_os.getenv("AGENT_GC_MAX_TOOL_CALL_ARG_CHARS", "2000"))
 ELIDABLE_MUTATION_TOOLS = {
     "addLesson",
     "updateLessonContent",
@@ -228,6 +235,12 @@ def _elide_tool_args(ai: AIMessage) -> AIMessage:
                 if isinstance(v, list) and len(v) > 0:
                     new_args[k] = [{"__elided__": True, "blockCount": len(v)}]
                     changed = True
+            # Also clip any long *string* arg (markdown, description, summary,
+            # etc.) that survives the list-elision above.
+            for k, v in list(new_args.items()):
+                if isinstance(v, str) and len(v) > MAX_TOOL_CALL_ARG_CHARS:
+                    new_args[k] = v[:MAX_TOOL_CALL_ARG_CHARS] + ("...[elided %d chars]" % (len(v) - MAX_TOOL_CALL_ARG_CHARS))
+                    changed = True
             tc = {**tc, "args": new_args}
         new_tcs.append(tc)
     if not changed:
@@ -426,10 +439,17 @@ def gc_persistent_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     """
     if not messages:
         return []
+    # Recent window is the MORE AGGRESSIVE of:
+    #   - last KEEP_RECENT_TURNS HumanMessage boundaries (intent-preserving)
+    #   - last KEEP_MAX_MESSAGES raw messages (tool-loop-safe)
+    # This fixes the long-authoring-run case where one user message spawns
+    # dozens of AI/tool turns and the boundary window alone never reaches them.
     boundaries = _boundary_indices(messages)
-    if len(boundaries) <= KEEP_RECENT_TURNS:
+    boundary_start = boundaries[-KEEP_RECENT_TURNS] if len(boundaries) > KEEP_RECENT_TURNS else 0
+    count_start = max(0, len(messages) - KEEP_MAX_MESSAGES)
+    recent_start = max(boundary_start, count_start)
+    if recent_start == 0:
         return []
-    recent_start = boundaries[-KEEP_RECENT_TURNS]
 
     updates: list[BaseMessage] = []
     tool_name_by_id: dict[str, str] = {}
@@ -448,10 +468,11 @@ def gc_persistent_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
             if new is not m:
                 updates.append(new)
         elif isinstance(m, ToolMessage):
+            # Elide ALL old ToolMessages, not only known read tools --
+            # writer confirmations can echo big block arrays too.
             hint = tool_name_by_id.get(getattr(m, "tool_call_id", ""))
-            if hint in ELIDABLE_READ_TOOLS or hint is None:
-                new = _elide_tool_result(m, hint)
-                if new is not m:
-                    updates.append(new)
+            new = _elide_tool_result(m, hint)
+            if new is not m:
+                updates.append(new)
     return updates
 

@@ -11,6 +11,8 @@ import { useThreads, threadVariant } from "@/providers/Thread";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { useThreadStatus } from "@/hooks/useThreadStatus";
 import { Markdown } from "@/components/chat/Markdown";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { useThreadMessagesCache } from "@/stores/thread-messages-cache";
 import { AlertCircle, Ban, BookOpen, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Eye, FileText, Layers, ListTodo, Loader2, OctagonAlert, Pencil, RotateCw, Send, Sparkles, Square, Users, Wrench, XCircle, Zap, ZapOff } from "lucide-react";
 import { usePlanStore } from "@/stores/plan-store";
 import { PlanCard } from "@/components/chat/PlanCard";
@@ -1332,6 +1334,31 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
 
   const messages = (stream.messages ?? []) as AnyMsg[];
 
+  // Message cache: hydrate-on-mount, throttled persist-on-change.
+  // Backed by localStorage and keyed by threadId. Lets useSyllabusAgent
+  // skip fetchStateHistory on warm reloads since the UI can paint from
+  // cache while the live SSE stream rejoins.
+  const cacheSet = useThreadMessagesCache((st) => st.set);
+  const cacheGet = useThreadMessagesCache((st) => st.get);
+  const cachedSeed = useMemo(
+    () => (threadId ? cacheGet(threadId)?.messages ?? null : null),
+    [threadId, cacheGet]
+  );
+  const effectiveMessages = messages.length > 0 ? messages : (cachedSeed ?? []);
+  const persistTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!threadId || messages.length === 0) return;
+    if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = window.setTimeout(() => {
+      cacheSet(threadId, messages);
+    }, 750);
+    return () => {
+      if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
+    };
+  }, [threadId, messages, cacheSet]);
+
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+
   // Deep variant uses deepagents' built-in `write_todos` tool which writes
   // into `state.todos` (not into `plan-store`). Mirror that array into the
   // existing plan-store whenever it changes so <PlanStrip/> renders one
@@ -1860,23 +1887,40 @@ function ChatPaneBody({ bumpEpoch }: { bumpEpoch: () => void }) {
             Rejoining in-flight run… waiting for the next token.
           </div>
         )}
-        {messages.map((m, i) => {
-          const role = m.type ?? m.role;
-          const isAssistant = role !== "human" && role !== "user" && role !== "tool";
-          const isLast = isAssistant && i === messages.length - 1;
-          const key = (m.id as string) ?? `__idx:${i}`;
-          if (hiddenMessageIds.has(key)) return null;
+        {(() => {
+          const src = effectiveMessages as AnyMsg[];
+          const visible = src
+            .map((m, i) => ({ m, i, key: (m.id as string) ?? `__idx:${i}` }))
+            .filter(({ key }) => !hiddenMessageIds.has(key));
+          if (visible.length === 0) return null;
+          const lastIdx = src.length - 1;
           return (
-            <MessageBubble
-              key={visibleKey(m, i)}
-              m={m}
-              toolResults={toolResults}
-              isLastAssistant={isLast}
-              isStreaming={isStreaming}
-              subagentsByTaskCallId={subagentsByTaskCallId}
+            <Virtuoso
+              ref={virtuosoRef}
+              data={visible}
+              style={{ flex: 1, minHeight: 200 }}
+              followOutput={isStreaming ? "smooth" : "auto"}
+              initialTopMostItemIndex={Math.max(0, visible.length - 1)}
+              computeItemKey={(_, item) => visibleKey(item.m as any, item.i)}
+              increaseViewportBy={{ top: 800, bottom: 1200 }}
+              itemContent={(_, item) => {
+                const { m, i } = item;
+                const role = m.type ?? m.role;
+                const isAssistant = role !== "human" && role !== "user" && role !== "tool";
+                const isLast = isAssistant && i === lastIdx;
+                return (
+                  <MessageBubble
+                    m={m}
+                    toolResults={toolResults}
+                    isLastAssistant={isLast}
+                    isStreaming={isStreaming}
+                    subagentsByTaskCallId={subagentsByTaskCallId}
+                  />
+                );
+              }}
             />
           );
-        })}
+        })()}
         {(() => {
           // "Thinking…" placeholder while the agent has been invoked but
           // hasn\'t emitted the first assistant token (no content and no
