@@ -1,9 +1,24 @@
 "use client";
-import React, { memo } from "react";
+import React, { memo, useDeferredValue, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
+
+// rehype-highlight is lazy-loaded and only applied to sources that contain a
+// fenced code block. Parsing + tokenizing is expensive and 95% of assistant
+// messages are plain prose. The module is cached after the first import.
+let _rehypeHighlightMod: any = null;
+let _rehypeHighlightPromise: Promise<any> | null = null;
+function loadRehypeHighlight() {
+  if (_rehypeHighlightMod) return _rehypeHighlightMod;
+  if (!_rehypeHighlightPromise) {
+    _rehypeHighlightPromise = import("rehype-highlight").then((m) => {
+      _rehypeHighlightMod = m.default ?? m;
+      return _rehypeHighlightMod;
+    });
+  }
+  return null;
+}
 
 const components: Components = {
   p: ({ children }) => <p className="leading-relaxed mb-2 last:mb-0">{children}</p>,
@@ -30,9 +45,7 @@ const components: Components = {
         </code>
       );
     }
-    return (
-      <code className="rounded bg-[var(--muted)] px-1 py-0.5 text-[0.85em] font-mono">{children}</code>
-    );
+    return <code className="rounded bg-[var(--muted)] px-1 py-0.5 text-[0.85em] font-mono">{children}</code>;
   },
   pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-md">{children}</pre>,
   table: ({ children }) => (
@@ -46,10 +59,18 @@ const components: Components = {
 };
 
 function MarkdownImpl({ source }: { source: string }) {
+  // Defer mid-stream reparses so token-level appends don't block scroll/input.
+  const deferred = useDeferredValue(source);
+  const hasFence = useMemo(() => deferred.includes("```"), [deferred]);
+  const rehypePlugins = useMemo(() => {
+    if (!hasFence) return [];
+    const mod = loadRehypeHighlight();
+    return mod ? [mod] : [];
+  }, [hasFence]);
   return (
     <div className="prose-custom break-words">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
-        {source}
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins} components={components}>
+        {deferred}
       </ReactMarkdown>
     </div>
   );
