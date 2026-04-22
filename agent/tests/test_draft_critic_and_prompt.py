@@ -139,7 +139,7 @@ def test_prompt_trimmed_on_greeting_turn():
     state = {"messages": [HumanMessage(content="hi!")]}
     prompt = build_system_prompt(state, [])
     assert "CONVERSATIONAL OPENING" in prompt  # ROLE kept
-    assert "WORKING LOOP" not in prompt  # LOOP skipped
+    assert "WORKING LOOP (follow every time" not in prompt  # LOOP section skipped
     assert "VERIFY BEFORE ACT" not in prompt
     assert "BATCHED LESSON AUTHORING" not in prompt
     assert "QUALITY GATE" not in prompt
@@ -148,18 +148,18 @@ def test_prompt_trimmed_on_greeting_turn():
 def test_prompt_includes_working_loop_on_authoring_intent():
     state = {"messages": [HumanMessage(content="Please create a syllabus for grade 3 math")]}
     prompt = build_system_prompt(state, [])
-    assert "WORKING LOOP" in prompt
+    assert "WORKING LOOP (follow every time" in prompt
     assert "BATCHED LESSON AUTHORING" in prompt
 
 
 def test_prompt_includes_working_loop_when_editor_context_present():
     state = {"messages": [HumanMessage(content="thanks!")]}
     prompt = build_system_prompt(state, [], editor_context_override={"syllabus": {"id": "s1"}})
-    assert "WORKING LOOP" in prompt
+    assert "WORKING LOOP (follow every time" in prompt
 
 
 def test_prompt_includes_working_loop_when_critic_feedback_pending():
     state = {"messages": [HumanMessage(content="ok")]}
     prompt = build_system_prompt(state, [], critic_feedback="Fix missing Sources section.")
     assert "REVISION REQUIRED" in prompt
-    assert "WORKING LOOP" in prompt
+    assert "WORKING LOOP (follow every time" in prompt
