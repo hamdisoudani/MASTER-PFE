@@ -73,6 +73,20 @@ LESSON_MUTATION_TOOLS = {
     "patchLessonBlocks",
 }
 
+# Server-side draft* mutation tools that must ALSO trigger the critic.
+# Historically `LESSON_MUTATION_TOOLS` only listed the frontend-interrupt
+# names, so `draft*` authoring silently bypassed the deterministic rubric
+# (see SESSION_NOTES.md 2026-04-21 "critic gap on drafts"). The new
+# `tools_post_hook` node inspects the ToolMessages produced by the
+# server-side ToolNode and replays the critic rubric on draft writes.
+DRAFT_LESSON_MUTATION_TOOLS = {
+    "draftAddLesson",
+    "draftUpdateLessonContent",
+    "draftAppendLessonContent",
+    "draftPatchLessonBlocks",
+}
+ALL_LESSON_MUTATION_TOOLS = LESSON_MUTATION_TOOLS | DRAFT_LESSON_MUTATION_TOOLS
+
 
 # ---------------------------------------------------------------------------
 # publish() — the ONLY sanctioned way to append a user-visible message.
@@ -95,13 +109,33 @@ def _internal_note(text: str, *, kind: str = "system-note") -> SystemMessage:
 # Helpers
 # ---------------------------------------------------------------------------
 
+# When the agent is in draft-first mode (the default, see agent/tools.py),
+# the client MAY still forward persistent lesson-mutation frontend schemas
+# (addLesson / appendLessonContent / updateLessonContent / patchLessonBlocks).
+# If it does, the LLM sees both families side-by-side and can pick the
+# persistent one, which would skip the draft store entirely and push
+# straight to Supabase. Filter them out here so the model only ever sees
+# the draft* toolbelt server-side + askUser frontend-side.
+#
+# Opt-out via AGENT_FILTER_PERSISTENT_FRONTEND_MUTATIONS=0 for the legacy
+# persistent-only client.
+_PERSISTENT_FRONTEND_MUTATION_SHADOWS = frozenset(LESSON_MUTATION_TOOLS)
+
+
 def _frontend_tool_defs(config: RunnableConfig) -> list[dict[str, Any]]:
     cfg = (config or {}).get("configurable", {}) or {}
     schemas = cfg.get("frontend_tools") or []
+    filter_shadows = os.getenv("AGENT_FILTER_PERSISTENT_FRONTEND_MUTATIONS", "1") != "0"
     out: list[dict[str, Any]] = []
     for item in schemas:
         name = item.get("name")
         if not name:
+            continue
+        if filter_shadows and name in _PERSISTENT_FRONTEND_MUTATION_SHADOWS:
+            logger.debug(
+                "frontend-tool filter: dropping persistent shadow %s (draft-mode)",
+                name,
+            )
             continue
         params = item.get("parameters") or {"type": "object", "properties": {}}
         fn: dict[str, Any] = {
@@ -310,7 +344,9 @@ async def critic_node(state: AgentState, config: RunnableConfig) -> dict[str, An
 
     # patchLessonBlocks only carries a partial patch — defer rubric until
     # the agent re-reads the full lesson.
-    if lesson.get("tool") == "patchLessonBlocks":
+    # patch* only carries a partial patch — defer rubric until the agent
+    # re-reads the full lesson (works for both persistent and draft paths).
+    if lesson.get("tool") in ("patchLessonBlocks", "draftPatchLessonBlocks"):
         return {"last_authored_lesson": None}
 
     lesson_id = str(lesson.get("lesson_id") or "unknown")
@@ -318,15 +354,17 @@ async def critic_node(state: AgentState, config: RunnableConfig) -> dict[str, An
     title = lesson.get("title")
     batch_blocks = lesson.get("blocks") or []
 
-    # Aggregate batched authoring (addLesson + appendLessonContent).
+    # Aggregate batched authoring. Both frontend and draft* tool names are
+    # normalized to one of three aggregation strategies: "add" (replace),
+    # "append" (extend), "update" (full overwrite).
     cache = dict(state.get("lesson_blocks_cache") or {})
-    if tool_name == "addLesson":
+    if tool_name in ("addLesson", "draftAddLesson"):
         cache[lesson_id] = list(batch_blocks)
         aggregated = cache[lesson_id]
-    elif tool_name == "appendLessonContent":
+    elif tool_name in ("appendLessonContent", "draftAppendLessonContent"):
         aggregated = list(cache.get(lesson_id) or []) + list(batch_blocks)
         cache[lesson_id] = aggregated
-    else:  # updateLessonContent — full overwrite
+    else:  # updateLessonContent / draftUpdateLessonContent — full overwrite
         cache[lesson_id] = list(batch_blocks)
         aggregated = cache[lesson_id]
 
@@ -371,6 +409,110 @@ async def critic_node(state: AgentState, config: RunnableConfig) -> dict[str, An
     return out
 
 
+
+
+# ---------------------------------------------------------------------------
+# tools_post_hook — bridge server-side ToolNode → critic_node for draft* writes.
+# ---------------------------------------------------------------------------
+
+def _extract_draft_mutation_args(tc: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a ``last_authored_lesson`` payload for a resolved draft mutation
+    tool_call, or ``None`` if the tool is not a draft lesson mutation.
+
+    Mirrors the shape built by ``frontend_tool_node`` so the critic can
+    consume either path uniformly.
+    """
+    name = tc.get("name")
+    if name not in DRAFT_LESSON_MUTATION_TOOLS:
+        return None
+    args = tc.get("args") or {}
+    if not isinstance(args, dict):
+        return None
+    if name == "draftPatchLessonBlocks":
+        blocks = args.get("patches") or []
+    elif name == "draftAppendLessonContent":
+        blocks = args.get("blocks")
+    elif name == "draftUpdateLessonContent":
+        blocks = args.get("blocks")
+    else:  # draftAddLesson
+        blocks = args.get("blocks") or args.get("content")
+    lesson_id = (
+        args.get("lesson_id")
+        or args.get("lessonId")
+        or args.get("chapter_id")
+        or args.get("chapterId")
+        or "unknown"
+    )
+    blocks_list = blocks if isinstance(blocks, list) else []
+    return {
+        "lesson_id": str(lesson_id),
+        "tool": name,
+        "blocks": blocks_list,
+        "title": args.get("title"),
+    }
+
+
+def _tool_message_failed(tm: ToolMessage) -> bool:
+    """Detect ToolMessages that represent an error so we don't critique a
+    failed mutation."""
+    if getattr(tm, "status", None) == "error":
+        return True
+    content = tm.content if isinstance(tm.content, str) else json.dumps(tm.content, default=str)
+    if not content:
+        return False
+    head = content.strip()[:200]
+    if head.startswith("{") and '"error"' in head:
+        return True
+    return False
+
+
+async def tools_post_hook(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    """Run after the server-side ``ToolNode``.
+
+    If the most recent AIMessage contained a ``draft*`` lesson-mutation
+    tool_call AND its matching ToolMessage succeeded, populate
+    ``last_authored_lesson`` so the router sends the state to
+    ``critic_node``. Otherwise this is a no-op.
+
+    This is the draft-side counterpart of ``frontend_tool_node``'s critic
+    handoff. See SESSION_NOTES.md 2026-04-21 §"critic gap on drafts".
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return {}
+    # Find the latest AIMessage with tool_calls — that was what ToolNode
+    # just executed. Walk back from the end.
+    ai: AIMessage | None = None
+    tool_results_by_id: dict[str, ToolMessage] = {}
+    for m in reversed(messages):
+        if isinstance(m, ToolMessage):
+            tcid = getattr(m, "tool_call_id", None)
+            if tcid and tcid not in tool_results_by_id:
+                tool_results_by_id[tcid] = m
+        elif isinstance(m, AIMessage):
+            if getattr(m, "tool_calls", None):
+                ai = m
+                break
+    if ai is None:
+        return {}
+
+    tool_calls = list(getattr(ai, "tool_calls", None) or [])
+    last_lesson: dict[str, Any] | None = None
+    for tc in tool_calls:
+        payload = _extract_draft_mutation_args(tc)
+        if payload is None:
+            continue
+        tm = tool_results_by_id.get(tc.get("id") or "")
+        if tm is None or _tool_message_failed(tm):
+            continue
+        # Keep the LAST successful draft mutation — mirrors frontend_tool_node.
+        last_lesson = payload
+
+    if last_lesson is None:
+        return {}
+    return {"last_authored_lesson": last_lesson}
+
+
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
@@ -405,7 +547,17 @@ def route_after_frontend_tools(state: AgentState, config: RunnableConfig) -> str
     return "chat_node"
 
 
+def route_after_tools_post_hook(state: AgentState, config: RunnableConfig) -> str:
+    """After ``tools_post_hook``: gate on ``last_authored_lesson`` (draft
+    path) the same way ``route_after_frontend_tools`` does for the
+    frontend path."""
+    if state.get("last_authored_lesson"):
+        return "critic_node"
+    return "chat_node"
+
+
 def route_after_tools_python(state: AgentState, config: RunnableConfig) -> str:
+    # kept for backwards compatibility with older imports
     return "chat_node"
 
 
