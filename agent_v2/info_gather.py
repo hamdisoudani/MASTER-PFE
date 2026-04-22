@@ -60,7 +60,7 @@ async def info_gather_node(state: AgentStateV2) -> dict[str, Any]:
     # 3) ask LLM for structured recommendation
     structured = llm.with_structured_output(ResearchRecommendationSchema)
     ctx = "\n".join(
-        f"- {item.get("query")}: "
+        f"- {item.get('query')}: "
         + ", ".join((item.get("result_urls") or [])[:3])
         for item in research
     )

@@ -4,7 +4,7 @@ import { useQueryState } from "nuqs";
 import { useThreads, threadVariant } from "@/providers/Thread";
 import { useThreadStore } from "@/stores/thread-store";
 import type { AgentVariant } from "@/providers/client";
-import { Loader2, Plus, RefreshCcw, Trash2, Sparkles, Zap } from "lucide-react";
+import { Loader2, Plus, RefreshCcw, Trash2, Sparkles, Zap, GitBranch } from "lucide-react";
 
 function firstUserPreview(t: any): string {
   const vals = t?.values as any;
@@ -28,7 +28,7 @@ type ThreadRowProps = {
 
 const ThreadRow = memo(function ThreadRow({ thread, active, onPick, onDelete }: ThreadRowProps) {
   const v = threadVariant(thread);
-  const VIcon = v === "deep" ? Sparkles : Zap;
+  const VIcon = v === "deep" ? Sparkles : v === "v2" ? GitBranch : Zap;
   const id = thread.thread_id as string;
   const handleClick = useCallback(() => onPick(id), [id, onPick]);
   const handleDelete = useCallback(
@@ -121,6 +121,7 @@ export function ThreadHistory() {
         >
           <option value="classic">Classic</option>
           <option value="deep">Deep</option>
+          <option value="v2">V2 (Router)</option>
         </select>
         <button
           onClick={onNew}

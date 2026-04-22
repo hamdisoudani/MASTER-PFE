@@ -65,7 +65,7 @@ export function SiteHeader() {
   );
   const name = thread ? firstUserPreview(thread) : "No thread selected";
   const variant = thread ? threadVariant(thread) : null;
-  const VIcon = variant === "deep" ? Sparkles : Zap;
+  const VIcon = variant === "deep" ? Sparkles : variant === "v2" ? GitBranch : Zap;
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--background)] px-3">
@@ -73,7 +73,7 @@ export function SiteHeader() {
       <Separator orientation="vertical" className="mx-1 h-5" />
       {variant && (
         <VIcon
-          className={`h-3.5 w-3.5 shrink-0 ${variant === "deep" ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}`}
+          className={`h-3.5 w-3.5 shrink-0 ${variant === "deep" || variant === "v2" ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}`}
           aria-label={variant}
         />
       )}

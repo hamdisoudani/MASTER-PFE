@@ -4,6 +4,7 @@ import { Client } from "@langchain/langgraph-sdk";
 const DEFAULT_AGENT_URL = "https://agent-production-43c3.up.railway.app";
 const DEFAULT_CLASSIC_ASSISTANT = "syllabus_agent";
 const DEFAULT_DEEP_ASSISTANT = "syllabus_agent_deep";
+const DEFAULT_V2_ASSISTANT = "syllabus_agent_v2";
 
 function nonEmpty(v: string | undefined | null): string | undefined {
   if (typeof v !== "string") return undefined;
@@ -20,14 +21,19 @@ export const CLASSIC_ASSISTANT_ID =
 export const DEEP_ASSISTANT_ID =
   nonEmpty(process.env.NEXT_PUBLIC_DEEP_ASSISTANT_ID) ?? DEFAULT_DEEP_ASSISTANT;
 
+export const V2_ASSISTANT_ID =
+  nonEmpty(process.env.NEXT_PUBLIC_V2_ASSISTANT_ID) ?? DEFAULT_V2_ASSISTANT;
+
 // Back-compat export: existing code that imports `ASSISTANT_ID` keeps working
 // and falls back to the classic agent.
 export const ASSISTANT_ID = CLASSIC_ASSISTANT_ID;
 
-export type AgentVariant = "classic" | "deep";
+export type AgentVariant = "classic" | "deep" | "v2";
 
 export function assistantIdFor(variant: AgentVariant | undefined | null): string {
-  return variant === "deep" ? DEEP_ASSISTANT_ID : CLASSIC_ASSISTANT_ID;
+  if (variant === "deep") return DEEP_ASSISTANT_ID;
+  if (variant === "v2") return V2_ASSISTANT_ID;
+  return CLASSIC_ASSISTANT_ID;
 }
 
 /** Optional API key for an auth-enabled LangGraph deployment. */

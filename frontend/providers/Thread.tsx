@@ -93,5 +93,7 @@ export function useThreads() {
 /** Read the locked agent variant from a thread's metadata. Defaults to "classic". */
 export function threadVariant(t: Thread | null | undefined): AgentVariant {
   const v = (t?.metadata as any)?.variant;
-  return v === "deep" ? "deep" : "classic";
+  if (v === "deep") return "deep";
+  if (v === "v2") return "v2";
+  return "classic";
 }
