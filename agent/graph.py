@@ -13,6 +13,8 @@ from agent.nodes import (
     route_after_chat,
     route_after_critic,
     route_after_frontend_tools,
+    route_after_tools_post_hook,
+    tools_post_hook,
 )
 from agent.state import AgentState
 from agent.tools import PYTHON_TOOLS, PYTHON_TOOL_NAMES
@@ -27,18 +29,25 @@ def _tool_error_handler(exc: Exception) -> str:
 
 
 def build_graph():
-    """syllabus_agent — classic ReAct loop with critic gate on lesson mutations.
+    """syllabus_agent — ReAct loop with a deterministic critic gate that
+    now covers BOTH paths:
 
-    The hierarchical plan_router / tools_post_hook layer referenced by an
-    earlier refactor never landed in ``agent/nodes.py``. The critic is
-    triggered exclusively from ``frontend_tool_node`` via
-    ``last_authored_lesson`` (see state.py docstring), and server-side
-    draft* tools are QA-gated through the VERIFY_BEFORE_ACT + CRITIC_GATE
-    prompt sections (see agent/prompts.py).
+    chat_node ─┬─ python/draft tools ─▶ ToolNode ─▶ tools_post_hook ─┐
+               │                                                     │
+               └─ frontend tools ─▶ frontend_tool_node ──────────────┤
+                                                                     ▼
+                                                       (last_authored_lesson?)
+                                                         yes → critic_node
+                                                         no  → chat_node / END
+
+    ``tools_post_hook`` replays the critic rubric on successful server-side
+    ``draft*`` lesson mutations (previously the critic only fired on
+    frontend mutations — see SESSION_NOTES.md §"critic gap on drafts").
     """
     g = StateGraph(AgentState)
     g.add_node("chat_node", chat_node)
     g.add_node("tools", ToolNode(PYTHON_TOOLS, handle_tool_errors=_tool_error_handler))
+    g.add_node("tools_post_hook", tools_post_hook)
     g.add_node("frontend_tools", frontend_tool_node)
     g.add_node("critic_node", critic_node)
 
@@ -47,7 +56,12 @@ def build_graph():
         route_after_chat,
         {"tools": "tools", "frontend_tools": "frontend_tools", "end": END},
     )
-    g.add_edge("tools", "chat_node")
+    g.add_edge("tools", "tools_post_hook")
+    g.add_conditional_edges(
+        "tools_post_hook",
+        route_after_tools_post_hook,
+        {"critic_node": "critic_node", "chat_node": "chat_node"},
+    )
     g.add_conditional_edges(
         "frontend_tools",
         route_after_frontend_tools,
